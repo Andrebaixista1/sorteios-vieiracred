@@ -7,17 +7,21 @@ const defaultColors = [
 ]
 
 function BalloonGrid({
+  total,
   rows = 5,
   columns = 7,
   colors = defaultColors,
   onPop,
   disabled = false,
 }) {
-  const total = rows * columns
+  const balloonTotal =
+    Number.isFinite(Number(total)) && Number(total) > 0
+      ? Number(total)
+      : rows * columns
 
   return (
     <div className="balloon-grid">
-      {Array.from({ length: total }).map((_, index) => {
+      {Array.from({ length: balloonTotal }).map((_, index) => {
         const color = colors[index % colors.length]
         const handleClick = () => {
           if (disabled) return

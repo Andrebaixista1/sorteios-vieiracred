@@ -91,6 +91,58 @@ class CodeController extends Controller
         return response()->json(['success' => true]);
     }
 
+    public function playSummary()
+    {
+        $configuration = Configuration::firstOrCreate(
+            ['name' => 'default'],
+            [
+                'total_balloons' => 50,
+                'total_value' => 0,
+                'distribution' => $this->defaultDistribution(),
+            ]
+        );
+
+        $baseQuery = Code::query()->where('configuration_id', $configuration->id);
+        $usedQuery = (clone $baseQuery)->where('status', 'used');
+        $pendingQuery = (clone $baseQuery)->where('status', 'pending');
+
+        $awardedTotal = (int) round((clone $usedQuery)->sum('value'));
+        $totalValue = (int) round($configuration->total_value);
+        $remainingTotal = max(0, $totalValue - $awardedTotal);
+
+        $recentUsed = (clone $usedQuery)
+            ->orderByDesc('used_at')
+            ->orderByDesc('id')
+            ->limit(12)
+            ->get(['id', 'code', 'value', 'status', 'used_at'])
+            ->map(fn (Code $code) => [
+                'id' => $code->id,
+                'code' => $code->code,
+                'value' => (int) round($code->value),
+                'status' => $code->status,
+                'used_at' => optional($code->used_at)->toISOString(),
+            ])
+            ->values();
+
+        return response()->json([
+            'configuration' => [
+                'id' => $configuration->id,
+                'name' => $configuration->name,
+                'total_balloons' => (int) $configuration->total_balloons,
+                'total_value' => $totalValue,
+                'distribution' => $configuration->distribution,
+            ],
+            'summary' => [
+                'total_tokens' => (int) (clone $baseQuery)->count(),
+                'used_tokens' => (int) (clone $usedQuery)->count(),
+                'pending_tokens' => (int) (clone $pendingQuery)->count(),
+                'awarded_total' => $awardedTotal,
+                'remaining_total' => $remainingTotal,
+            ],
+            'recent_used' => $recentUsed,
+        ]);
+    }
+
     private function createCodes(Configuration $configuration, int $quantity): array
     {
         $created = [];
@@ -213,5 +265,18 @@ class CodeController extends Controller
         throw new HttpResponseException(
             response()->json(['message' => $message], $status)
         );
+    }
+
+    private function defaultDistribution(): array
+    {
+        return [
+            ['min' => 40, 'max' => 49, 'weight' => 32],
+            ['min' => 50, 'max' => 59, 'weight' => 22],
+            ['min' => 60, 'max' => 69, 'weight' => 13],
+            ['min' => 70, 'max' => 79, 'weight' => 20],
+            ['min' => 80, 'max' => 89, 'weight' => 7],
+            ['min' => 90, 'max' => 99, 'weight' => 4],
+            ['min' => 100, 'max' => 110, 'weight' => 2],
+        ];
     }
 }

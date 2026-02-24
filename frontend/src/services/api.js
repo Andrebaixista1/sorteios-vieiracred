@@ -40,6 +40,10 @@ export function listCodes() {
   return request('codes');
 }
 
+export function getPlaySummary() {
+  return request('play/summary');
+}
+
 export function validateCode(code) {
   return request('codes/validate', 'POST', { code });
 }

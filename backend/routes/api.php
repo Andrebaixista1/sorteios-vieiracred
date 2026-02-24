@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\ConfigurationController;
 Route::get('configuration', [ConfigurationController::class, 'show']);
 Route::post('configuration', [ConfigurationController::class, 'store']);
 Route::get('codes', [CodeController::class, 'index']);
+Route::get('play/summary', [CodeController::class, 'playSummary']);
 Route::post('codes', [CodeController::class, 'store']);
 Route::post('codes/check', [CodeController::class, 'checkToken']);
 Route::post('codes/validate', [CodeController::class, 'validateCode']);
