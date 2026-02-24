@@ -36,6 +36,10 @@ export function generateCodes(quantity, configurationId) {
   return request('codes', 'POST', { quantity, configuration_id: configurationId });
 }
 
+export function resetCodes(configurationId) {
+  return request('codes/reset', 'POST', { configuration_id: configurationId });
+}
+
 export function listCodes() {
   return request('codes');
 }

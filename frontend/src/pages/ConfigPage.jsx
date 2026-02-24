@@ -4,6 +4,7 @@ import {
   getConfiguration,
   generateCodes,
   listCodes,
+  resetCodes,
   saveConfiguration,
 } from '../services/api'
 
@@ -68,6 +69,7 @@ function ConfigPage() {
   const [statusMessage, setStatusMessage] = useState('')
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [resettingTokens, setResettingTokens] = useState(false)
   const [tokenQuantity, setTokenQuantity] = useState(10)
   const [activeTab, setActiveTab] = useState(TAB_CONFIGURATION)
 
@@ -196,6 +198,34 @@ function ConfigPage() {
       setStatusMessage(error.message)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  async function handleResetTokens() {
+    if (!configuration) {
+      setStatusMessage('Salve a configuraÃ§Ã£o antes de gerenciar tokens')
+      return
+    }
+
+    const confirmed = window.confirm(
+      'Deseja zerar todos os tokens? Eles voltarÃ£o para pendente e sem valor.',
+    )
+
+    if (!confirmed) return
+
+    setResettingTokens(true)
+    setStatusMessage('')
+
+    try {
+      const response = await resetCodes(configuration.id)
+      await fetchCodes()
+      setStatusMessage(
+        `${response.reset_count ?? 0} token(s) resetado(s) para zero`,
+      )
+    } catch (error) {
+      setStatusMessage(error.message)
+    } finally {
+      setResettingTokens(false)
     }
   }
 
@@ -345,6 +375,13 @@ function ConfigPage() {
                 disabled={generating}
               >
                 {generating ? 'Gerando...' : 'Gerar tokens'}
+              </button>
+              <button
+                className="ghost-button"
+                onClick={handleResetTokens}
+                disabled={resettingTokens}
+              >
+                {resettingTokens ? 'Zerando...' : 'Zerar tokens'}
               </button>
             </div>
             <p className="tokens-note">

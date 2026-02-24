@@ -91,6 +91,25 @@ class CodeController extends Controller
         return response()->json(['success' => true]);
     }
 
+    public function reset(Request $request)
+    {
+        $payload = $request->validate([
+            'configuration_id' => 'required|exists:configurations,id',
+        ]);
+
+        $affected = Code::where('configuration_id', $payload['configuration_id'])
+            ->update([
+                'status' => 'pending',
+                'value' => 0,
+                'used_at' => null,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'reset_count' => $affected,
+        ]);
+    }
+
     public function playSummary()
     {
         $configuration = Configuration::firstOrCreate(
