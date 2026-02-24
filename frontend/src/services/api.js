@@ -1,4 +1,11 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
+const configuredApiBase = import.meta.env.VITE_API_BASE ?? '/api';
+const API_BASE =
+  typeof window !== 'undefined' &&
+  window.location.protocol === 'https:' &&
+  typeof configuredApiBase === 'string' &&
+  configuredApiBase.startsWith('http://')
+    ? '/api'
+    : configuredApiBase;
 
 async function request(path, method = 'GET', body) {
   const response = await fetch(`${API_BASE}/${path}`, {
