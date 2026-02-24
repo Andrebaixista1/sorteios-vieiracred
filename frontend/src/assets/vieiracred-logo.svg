@@ -1,0 +1,15 @@
+<svg width="120" height="34" viewBox="0 0 120 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pillGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1dd7ba" />
+      <stop offset="100%" stop-color="#2b97ff" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="6" width="56" height="22" rx="11" fill="url(#pillGrad)" />
+  <text x="8" y="20" font-family="Space Grotesk, system-ui, sans-serif" font-weight="600" font-size="14" fill="#03081e">
+    Vieira
+  </text>
+  <text x="62" y="22" font-family="Space Grotesk, system-ui, sans-serif" font-weight="500" font-size="18" fill="#ffffff">
+    cred
+  </text>
+</svg>

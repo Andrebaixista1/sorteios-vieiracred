@@ -1,0 +1,42 @@
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000/api';
+
+async function request(path, method = 'GET', body) {
+  const response = await fetch(`${API_BASE}/${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message ?? 'Erro ao se comunicar com o servidor');
+  }
+
+  return response.json();
+}
+
+export function getConfiguration() {
+  return request('configuration');
+}
+
+export function saveConfiguration(values) {
+  return request('configuration', 'POST', values);
+}
+
+export function generateCodes(quantity, configurationId) {
+  return request('codes', 'POST', { quantity, configuration_id: configurationId });
+}
+
+export function listCodes() {
+  return request('codes');
+}
+
+export function validateCode(code) {
+  return request('codes/validate', 'POST', { code });
+}
+
+export function checkToken(code) {
+  return request('codes/check', 'POST', { code });
+}
