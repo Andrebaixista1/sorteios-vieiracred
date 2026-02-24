@@ -14,7 +14,10 @@ class CodeController extends Controller
 {
     public function index()
     {
+        $configurationId = request()->query('configuration_id');
+
         $codes = Code::with('configuration')
+            ->when($configurationId, fn ($query) => $query->where('configuration_id', $configurationId))
             ->orderByRaw("CASE WHEN status = 'used' THEN 0 ELSE 1 END")
             ->orderByDesc('used_at')
             ->orderByDesc('created_at')
@@ -95,18 +98,78 @@ class CodeController extends Controller
     {
         $payload = $request->validate([
             'configuration_id' => 'required|exists:configurations,id',
+            'quantity' => 'required|integer|min:1',
         ]);
 
-        $affected = Code::where('configuration_id', $payload['configuration_id'])
-            ->update([
-                'status' => 'pending',
-                'value' => 0,
-                'used_at' => null,
-            ]);
+        $configuration = Configuration::findOrFail($payload['configuration_id']);
+        $oldCodes = Code::where('configuration_id', $payload['configuration_id'])
+            ->pluck('code')
+            ->all();
+
+        $affected = count($oldCodes);
+
+        Code::where('configuration_id', $payload['configuration_id'])->delete();
+        $codes = $this->createCodes(
+            $configuration,
+            (int) $payload['quantity'],
+            $oldCodes,
+        );
 
         return response()->json([
             'success' => true,
-            'reset_count' => $affected,
+            'deleted_count' => $affected,
+            'generated_count' => count($codes),
+            'codes' => $codes,
+        ]);
+    }
+
+    public function playPop()
+    {
+        $configuration = Configuration::firstOrCreate(
+            ['name' => 'default'],
+            [
+                'total_balloons' => 50,
+                'total_value' => 0,
+                'distribution' => $this->defaultDistribution(),
+            ]
+        );
+
+        $totalBalloons = (int) $configuration->total_balloons;
+        $usedCount = Code::where('configuration_id', $configuration->id)
+            ->where('status', 'used')
+            ->count();
+
+        if ($usedCount >= $totalBalloons) {
+            $this->errorResponse('Todos os balões desta rodada já foram estourados.');
+        }
+
+        $code = Code::where('configuration_id', $configuration->id)
+            ->where('status', 'pending')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->first();
+
+        if (!$code) {
+            $code = Code::create([
+                'configuration_id' => $configuration->id,
+                'code' => $this->generateCode(),
+                'status' => 'pending',
+                'value' => 0,
+            ]);
+        }
+
+        $value = $this->allocateValue($configuration);
+
+        $code->update([
+            'status' => 'used',
+            'used_at' => now(),
+            'value' => $value,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'value' => (int) round($code->value),
+            'code' => $code->code,
         ]);
     }
 
@@ -128,6 +191,9 @@ class CodeController extends Controller
         $awardedTotal = (int) round((clone $usedQuery)->sum('value'));
         $totalValue = (int) round($configuration->total_value);
         $remainingTotal = max(0, $totalValue - $awardedTotal);
+        $totalBalloons = (int) $configuration->total_balloons;
+        $usedBalloons = min($totalBalloons, (int) (clone $usedQuery)->count());
+        $remainingBalloons = max(0, $totalBalloons - $usedBalloons);
 
         $recentUsed = (clone $usedQuery)
             ->orderByDesc('used_at')
@@ -157,20 +223,27 @@ class CodeController extends Controller
                 'pending_tokens' => (int) (clone $pendingQuery)->count(),
                 'awarded_total' => $awardedTotal,
                 'remaining_total' => $remainingTotal,
+                'used_balloons' => $usedBalloons,
+                'remaining_balloons' => $remainingBalloons,
             ],
             'recent_used' => $recentUsed,
         ]);
     }
 
-    private function createCodes(Configuration $configuration, int $quantity): array
+    private function createCodes(Configuration $configuration, int $quantity, array $reservedCodes = []): array
     {
         $created = [];
+        $reservedLookup = [];
 
-        DB::transaction(function () use (&$created, $configuration, $quantity) {
+        foreach ($reservedCodes as $reservedCode) {
+            $reservedLookup[strtoupper((string) $reservedCode)] = true;
+        }
+
+        DB::transaction(function () use (&$created, $configuration, $quantity, &$reservedLookup) {
             for ($i = 0; $i < $quantity; $i++) {
                 $code = Code::create([
                     'configuration_id' => $configuration->id,
-                    'code' => $this->generateCode(),
+                    'code' => $this->generateCode($reservedLookup),
                     'status' => 'pending',
                     'value' => 0,
                 ]);
@@ -192,9 +265,10 @@ class CodeController extends Controller
     {
         $distribution = $this->prepareDistribution($configuration);
 
-        $pendingCount = Code::where('configuration_id', $configuration->id)
-            ->where('status', 'pending')
+        $usedCount = (int) Code::where('configuration_id', $configuration->id)
+            ->where('status', 'used')
             ->count();
+        $remainingBalloons = max(0, (int) $configuration->total_balloons - $usedCount);
 
         $allocated = (int) round(
             Code::where('configuration_id', $configuration->id)
@@ -203,27 +277,77 @@ class CodeController extends Controller
         );
 
         $remainingValue = max(0, (int) round($configuration->total_value) - $allocated);
+        $usedPositiveValues = Code::where('configuration_id', $configuration->id)
+            ->where('status', 'used')
+            ->where('value', '>', 0)
+            ->pluck('value')
+            ->map(fn ($value) => (int) round($value))
+            ->unique()
+            ->values()
+            ->all();
+        $usedValueLookup = array_fill_keys($usedPositiveValues, true);
 
-        if ($pendingCount <= 0) {
-            $this->errorResponse('Não há tokens pendentes para distribuir.');
+        if ($remainingBalloons <= 0) {
+            $this->errorResponse('Nao ha baloes restantes para distribuir.');
         }
 
-        // Sem prêmio é permitido: se não houver saldo ou nenhuma faixa couber no saldo,
-        // retorna 0 e mantém as faixas positivas sempre respeitadas.
         if ($remainingValue <= 0) {
             return 0;
         }
 
-        $affordableDistribution = $distribution
-            ->filter(fn ($bucket) => (int) round($bucket['min'] ?? 0) <= $remainingValue)
-            ->values();
+        $allAvailableValues = $this->getAvailableUniqueValues(
+            $distribution->all(),
+            $remainingValue,
+            $usedValueLookup,
+        );
 
-        if ($affordableDistribution->isEmpty()) {
-            return 0;
+        if (!$this->canReachExactTotal($allAvailableValues, $remainingBalloons, $remainingValue)) {
+            $this->errorResponse('Nao foi possivel fechar o valor total com os baloes restantes.');
         }
 
-        $bucket = $this->pickBucket($affordableDistribution);
-        return $this->pickValueWithinBucket($bucket, $remainingValue);
+        $bucketCandidates = [];
+        $feasibilityCache = [];
+
+        foreach ($distribution as $bucket) {
+            $candidateValues = $this->getAvailableUniqueValues(
+                [$bucket],
+                $remainingValue,
+                $usedValueLookup,
+            );
+
+            if (empty($candidateValues)) {
+                continue;
+            }
+
+            $feasibleValues = [];
+            foreach ($candidateValues as $candidateValue) {
+                if ($this->canFinishAfterChoosingValue(
+                    $candidateValue,
+                    $allAvailableValues,
+                    $remainingBalloons,
+                    $remainingValue,
+                    $feasibilityCache,
+                )) {
+                    $feasibleValues[] = $candidateValue;
+                }
+            }
+
+            if (!empty($feasibleValues)) {
+                $bucketCandidates[] = array_merge(
+                    $bucket,
+                    ['feasible_values' => $feasibleValues]
+                );
+            }
+        }
+
+        if (empty($bucketCandidates)) {
+            $this->errorResponse('Nao foi possivel encontrar premio valido para fechar o total.');
+        }
+
+        $bucket = $this->pickBucket(collect($bucketCandidates));
+        $values = $bucket['feasible_values'];
+
+        return (int) $values[array_rand($values)];
     }
 
     private function prepareDistribution(Configuration $configuration)
@@ -255,7 +379,143 @@ class CodeController extends Controller
         return $distribution->last();
     }
 
-    private function pickValueWithinBucket(array $bucket, int $remainingValue): int
+    private function bucketHasAvailableUniqueValue(array $bucket, int $remainingValue, array $usedValueLookup): bool
+    {
+        $min = max(0, (int) round($bucket['min']));
+        $max = max($min, (int) round($bucket['max']));
+        $maxAllowed = min($max, $remainingValue);
+
+        if ($remainingValue < $min || $maxAllowed < $min) {
+            return false;
+        }
+
+        for ($value = $min; $value <= $maxAllowed; $value++) {
+            if (!isset($usedValueLookup[$value])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function getAvailableUniqueValues(array $distribution, int $remainingValue, array $usedValueLookup): array
+    {
+        $values = [];
+
+        foreach ($distribution as $bucket) {
+            $min = max(0, (int) round($bucket['min'] ?? 0));
+            $max = max($min, (int) round($bucket['max'] ?? $min));
+            $maxAllowed = min($max, $remainingValue);
+
+            if ($maxAllowed < $min) {
+                continue;
+            }
+
+            for ($value = $min; $value <= $maxAllowed; $value++) {
+                if ($value <= 0 || isset($usedValueLookup[$value])) {
+                    continue;
+                }
+
+                $values[$value] = $value;
+            }
+        }
+
+        $values = array_values($values);
+        sort($values, SORT_NUMERIC);
+
+        return $values;
+    }
+
+    private function canFinishAfterChoosingValue(
+        int $chosenValue,
+        array $allAvailableValues,
+        int $remainingBalloons,
+        int $remainingValue,
+        array &$cache
+    ): bool {
+        $countAfter = $remainingBalloons - 1;
+        $targetAfter = $remainingValue - $chosenValue;
+
+        if ($countAfter == 0) {
+            return $targetAfter == 0;
+        }
+
+        if ($countAfter < 0 || $targetAfter <= 0) {
+            return false;
+        }
+
+        $cacheKey = $chosenValue . '|' . $countAfter . '|' . $targetAfter;
+        if (array_key_exists($cacheKey, $cache)) {
+            return $cache[$cacheKey];
+        }
+
+        $remainingChoices = [];
+        foreach ($allAvailableValues as $value) {
+            if ($value !== $chosenValue) {
+                $remainingChoices[] = $value;
+            }
+        }
+
+        $cache[$cacheKey] = $this->canReachExactTotal($remainingChoices, $countAfter, $targetAfter);
+
+        return $cache[$cacheKey];
+    }
+
+    private function canReachExactTotal(array $availableValues, int $countNeeded, int $target): bool
+    {
+        if ($countNeeded < 0 || $target < 0) {
+            return false;
+        }
+
+        if ($countNeeded === 0) {
+            return $target === 0;
+        }
+
+        $availableCount = count($availableValues);
+        if ($availableCount === 0 || $countNeeded > $availableCount) {
+            return false;
+        }
+
+        sort($availableValues, SORT_NUMERIC);
+
+        $minPossible = array_sum(array_slice($availableValues, 0, $countNeeded));
+        $maxPossible = array_sum(array_slice($availableValues, -$countNeeded));
+        if ($target < $minPossible || $target > $maxPossible) {
+            return false;
+        }
+
+        $reachable = array_fill(0, $countNeeded + 1, []);
+        $reachable[0] = [0 => true];
+
+        $processed = 0;
+        foreach ($availableValues as $value) {
+            $processed += 1;
+            $limit = min($countNeeded, $processed);
+
+            for ($count = $limit; $count >= 1; $count--) {
+                if (empty($reachable[$count - 1])) {
+                    continue;
+                }
+
+                foreach ($reachable[$count - 1] as $sum => $_) {
+                    $newSum = (int) $sum + $value;
+                    if ($newSum > $target) {
+                        continue;
+                    }
+
+                    $reachable[$count][$newSum] = true;
+                }
+            }
+
+            if (isset($reachable[$countNeeded][$target])) {
+                return true;
+            }
+        }
+
+        return isset($reachable[$countNeeded][$target]);
+    }
+
+    private function pickValueWithinBucket(array $bucket, int $remainingValue, array $usedValueLookup = []): int
     {
         $min = max(0, (int) round($bucket['min']));
         $max = max($min, (int) round($bucket['max']));
@@ -265,16 +525,34 @@ class CodeController extends Controller
         }
 
         $maxAllowed = min($max, $remainingValue);
-        return $min >= $maxAllowed
-            ? $min
-            : random_int($min, $maxAllowed);
+        if ($min >= $maxAllowed) {
+            return isset($usedValueLookup[$min]) ? 0 : $min;
+        }
+
+        $availableValues = [];
+        for ($value = $min; $value <= $maxAllowed; $value++) {
+            if (!isset($usedValueLookup[$value])) {
+                $availableValues[] = $value;
+            }
+        }
+
+        if (empty($availableValues)) {
+            return 0;
+        }
+
+        return $availableValues[array_rand($availableValues)];
     }
 
-    private function generateCode(): string
+    private function generateCode(array &$reservedLookup = []): string
     {
         do {
             $candidate = Str::upper(Str::random(4));
-        } while (Code::where('code', $candidate)->exists());
+        } while (
+            isset($reservedLookup[$candidate]) ||
+            Code::where('code', $candidate)->exists()
+        );
+
+        $reservedLookup[$candidate] = true;
 
         return $candidate;
     }
@@ -289,13 +567,11 @@ class CodeController extends Controller
     private function defaultDistribution(): array
     {
         return [
-            ['min' => 40, 'max' => 49, 'weight' => 32],
-            ['min' => 50, 'max' => 59, 'weight' => 22],
-            ['min' => 60, 'max' => 69, 'weight' => 13],
-            ['min' => 70, 'max' => 79, 'weight' => 20],
-            ['min' => 80, 'max' => 89, 'weight' => 7],
-            ['min' => 90, 'max' => 99, 'weight' => 4],
-            ['min' => 100, 'max' => 110, 'weight' => 2],
+            ['min' => 1, 'max' => 20, 'weight' => 24],
+            ['min' => 21, 'max' => 40, 'weight' => 34],
+            ['min' => 41, 'max' => 60, 'weight' => 50],
+            ['min' => 61, 'max' => 80, 'weight' => 33],
+            ['min' => 81, 'max' => 100, 'weight' => 13],
         ];
     }
 }

@@ -98,7 +98,8 @@ function App() {
               )
             }
           />
-          <Route path="/play" element={<PlayPage />} />
+          <Route path="/sorteios" element={<PlayPage />} />
+          <Route path="/play" element={<Navigate to="/sorteios" replace />} />
         </Routes>
       </main>
     </div>

@@ -36,16 +36,24 @@ export function generateCodes(quantity, configurationId) {
   return request('codes', 'POST', { quantity, configuration_id: configurationId });
 }
 
-export function resetCodes(configurationId) {
-  return request('codes/reset', 'POST', { configuration_id: configurationId });
+export function resetCodes(configurationId, quantity) {
+  return request('codes/reset', 'POST', {
+    configuration_id: configurationId,
+    quantity,
+  });
 }
 
-export function listCodes() {
-  return request('codes');
+export function listCodes(configurationId) {
+  const query = configurationId ? `?configuration_id=${configurationId}` : '';
+  return request(`codes${query}`);
 }
 
 export function getPlaySummary() {
   return request('play/summary');
+}
+
+export function popBalloon() {
+  return request('play/pop', 'POST');
 }
 
 export function validateCode(code) {

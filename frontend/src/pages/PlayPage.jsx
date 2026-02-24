@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import BalloonGrid from '../components/BalloonGrid'
 import ResultModal from '../components/ResultModal'
-import { checkToken, validateCode, getPlaySummary } from '../services/api'
+import { getPlaySummary, popBalloon } from '../services/api'
 
 const COLORS = ['#3ed597', '#3cc7ff', '#f8b64c', '#ff5f7f', '#8462ff']
-const helperText = 'Digite o token recebido para liberar os balões'
+const helperText = 'Clique em um balão para estourar. O sorteio respeita a configuração salva.'
 
 function formatCurrency(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
@@ -15,24 +15,74 @@ function formatCurrency(value) {
   })
 }
 
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+function getBalloonGridColumns(total) {
+  const amount = Number(total)
+  if (!Number.isFinite(amount) || amount <= 1) return 1
+
+  if (amount % 10 === 0) return 10
+
+  let best = Math.min(amount, 8)
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (let candidate = 2; candidate <= Math.min(amount, 12); candidate += 1) {
+    const rows = Math.ceil(amount / candidate)
+    const emptySlots = candidate * rows - amount
+    const shapePenalty = Math.abs(candidate - rows)
+    const score = emptySlots * 10 + shapePenalty
+
+    if (score < bestScore) {
+      best = candidate
+      bestScore = score
+    }
+  }
+
+  return best
+}
+
 function PlayPage() {
-  const [inputCode, setInputCode] = useState('')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
-  const [tokenValidated, setTokenValidated] = useState(false)
   const [popped, setPopped] = useState(false)
+  const [burstIndex, setBurstIndex] = useState(null)
   const [playData, setPlayData] = useState(null)
   const [sidebarLoading, setSidebarLoading] = useState(false)
 
   const configuredBalloons = useMemo(() => {
     const total = Number(playData?.configuration?.total_balloons ?? 0)
-    return Number.isFinite(total) && total > 0 ? total : 40
+    return Number.isFinite(total) && total > 0 ? total : 10
   }, [playData])
 
   const summary = playData?.summary ?? null
   const recentUsed = playData?.recent_used ?? []
+
+  const remainingBalloons = useMemo(() => {
+    const total = Number(summary?.remaining_balloons)
+    if (Number.isFinite(total)) {
+      return Math.max(0, total)
+    }
+
+    const usedTokens = Number(summary?.used_tokens)
+    if (Number.isFinite(usedTokens)) {
+      return Math.max(0, configuredBalloons - usedTokens)
+    }
+
+    return configuredBalloons
+  }, [summary, configuredBalloons])
+
+  const poppedBalloons = Math.max(0, configuredBalloons - remainingBalloons)
+
+  const balloonGridColumns = useMemo(
+    () => getBalloonGridColumns(configuredBalloons),
+    [configuredBalloons],
+  )
 
   useEffect(() => {
     refreshPlaySummary()
@@ -50,55 +100,34 @@ function PlayPage() {
     }
   }
 
-  async function handleTokenSubmit(event) {
-    event.preventDefault()
-    const code = inputCode.toUpperCase().trim()
+  async function handleBalloonPop(index) {
+    if (loading || popped) return
 
-    if (!code) {
-      setError('Informe um código antes de continuar')
+    if (remainingBalloons <= 0) {
+      setError('Não há mais balões disponíveis nesta rodada.')
       return
     }
 
     setLoading(true)
     setError('')
     setMessage('')
-    setPopped(false)
+    setBurstIndex(index)
 
     try {
-      await checkToken(code)
-      setTokenValidated(true)
-      setMessage('Token válido! Escolha um balão para estourar.')
+      const [response] = await Promise.all([popBalloon(), wait(550)])
+      const value = Number(response?.value ?? 0)
+
+      setPopped(true)
       await refreshPlaySummary()
-    } catch (err) {
-      setError(err.message)
-      setTokenValidated(false)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleBalloonPop() {
-    if (!tokenValidated || popped) return
-
-    setLoading(true)
-    setError('')
-    setMessage('')
-
-    try {
-      const response = await validateCode(inputCode.toUpperCase().trim())
-      const value = Number(response.value)
-
       setResult(response)
       setMessage(
         value > 0
           ? `Prêmio liberado: ${formatCurrency(value)}`
           : 'Balão estourado: sem prêmio desta vez.',
       )
-      setPopped(true)
-      setTokenValidated(false)
-      await refreshPlaySummary()
     } catch (err) {
       setError(err.message)
+      setBurstIndex(null)
     } finally {
       setLoading(false)
     }
@@ -106,6 +135,10 @@ function PlayPage() {
 
   function closeResult() {
     setResult(null)
+    setPopped(false)
+    setBurstIndex(null)
+    setMessage('')
+    setError('')
   }
 
   return (
@@ -115,36 +148,34 @@ function PlayPage() {
           <div className="play-card">
             <p className="stage-title">Dia do Fechamento</p>
             <p className="stage-subtitle">{helperText}</p>
-            <form className="code-form" onSubmit={handleTokenSubmit}>
-              <input
-                type="text"
-                maxLength="6"
-                placeholder="A3K9"
-                value={inputCode}
-                onChange={(event) => setInputCode(event.target.value)}
-                className="input-field code-input"
-                disabled={popped}
-              />
-              <button className="primary-button" disabled={loading || popped}>
-                {loading ? 'Validando...' : 'Entrar'}
-              </button>
-            </form>
+            <div className="play-stats-grid">
+              <div className="play-stat-box compact">
+                <span className="small-text">Balões configurados</span>
+                <strong>{configuredBalloons}</strong>
+              </div>
+              <div className="play-stat-box compact">
+                <span className="small-text">Balões restantes</span>
+                <strong>{remainingBalloons}</strong>
+              </div>
+            </div>
             {message && <p className="status-message">{message}</p>}
             {error && <p className="status-message error">{error}</p>}
           </div>
 
           <div className="balloon-stage">
-            {tokenValidated && !popped ? (
+            {configuredBalloons > 0 ? (
               <BalloonGrid
-                total={configuredBalloons}
-                columns={7}
+                total={remainingBalloons}
+                slotsTotal={configuredBalloons}
+                columns={balloonGridColumns}
                 colors={COLORS}
                 onPop={handleBalloonPop}
-                disabled={loading}
+                disabled={loading || popped || remainingBalloons <= 0}
+                burstIndex={burstIndex}
               />
             ) : (
               <div className="balloon-placeholder">
-                <p>Insira o token válido para liberar os balões.</p>
+                <p>Salve uma configuração com pelo menos 1 balão para começar.</p>
               </div>
             )}
           </div>
@@ -163,6 +194,10 @@ function PlayPage() {
                 <strong>{configuredBalloons}</strong>
               </div>
               <div className="play-stat-box">
+                <span className="small-text">Balões restantes</span>
+                <strong>{remainingBalloons}</strong>
+              </div>
+              <div className="play-stat-box">
                 <span className="small-text">Saldo total</span>
                 <strong>{formatCurrency(playData?.configuration?.total_value)}</strong>
               </div>
@@ -170,38 +205,38 @@ function PlayPage() {
                 <span className="small-text">Distribuído</span>
                 <strong>{formatCurrency(summary?.awarded_total)}</strong>
               </div>
-              <div className="play-stat-box">
-                <span className="small-text">Restante</span>
-                <strong>{formatCurrency(summary?.remaining_total)}</strong>
-              </div>
             </div>
 
             <div className="play-stats-grid">
               <div className="play-stat-box compact">
-                <span className="small-text">Tokens usados</span>
-                <strong>{summary?.used_tokens ?? 0}</strong>
+                <span className="small-text">Balões estourados</span>
+                <strong>{poppedBalloons}</strong>
               </div>
               <div className="play-stat-box compact">
-                <span className="small-text">Tokens pendentes</span>
+                <span className="small-text">Saldo restante</span>
+                <strong>{formatCurrency(summary?.remaining_total)}</strong>
+              </div>
+              <div className="play-stat-box compact">
+                <span className="small-text">Registros pendentes</span>
                 <strong>{summary?.pending_tokens ?? 0}</strong>
               </div>
             </div>
 
             <div className="play-history">
               <div className="play-sidebar-header">
-                <h4>Últimos tokens usados</h4>
+                <h4>Últimos resultados</h4>
               </div>
 
               {recentUsed.length === 0 ? (
                 <p className="tokens-empty play-history-empty">
-                  Nenhum token usado ainda.
+                  Nenhum balão estourado ainda.
                 </p>
               ) : (
                 <div className="play-history-list">
-                  {recentUsed.map((item) => (
+                  {recentUsed.map((item, index) => (
                     <div key={`${item.id}-${item.code}`} className="play-history-item">
                       <div>
-                        <strong>{item.code}</strong>
+                        <strong>{`Balão ${recentUsed.length - index}`}</strong>
                         <p className="small-text">
                           {item.value > 0 ? 'Premiado' : 'Sem prêmio'}
                         </p>

@@ -21,6 +21,7 @@ Route::get('configuration', [ConfigurationController::class, 'show']);
 Route::post('configuration', [ConfigurationController::class, 'store']);
 Route::get('codes', [CodeController::class, 'index']);
 Route::get('play/summary', [CodeController::class, 'playSummary']);
+Route::post('play/pop', [CodeController::class, 'playPop']);
 Route::post('codes', [CodeController::class, 'store']);
 Route::post('codes/reset', [CodeController::class, 'reset']);
 Route::post('codes/check', [CodeController::class, 'checkToken']);
