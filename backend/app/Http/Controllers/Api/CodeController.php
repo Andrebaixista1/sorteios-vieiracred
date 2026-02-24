@@ -20,6 +20,7 @@ class CodeController extends Controller
             ->orderByDesc('created_at')
             ->limit(50)
             ->get();
+
         return response()->json($codes);
     }
 
@@ -31,7 +32,6 @@ class CodeController extends Controller
         ]);
 
         $configuration = Configuration::findOrFail($payload['configuration_id']);
-
         $codes = $this->createCodes($configuration, $payload['quantity']);
 
         return response()->json([
@@ -93,10 +93,6 @@ class CodeController extends Controller
 
     private function createCodes(Configuration $configuration, int $quantity): array
     {
-        if ($configuration->total_value <= 0) {
-            $this->errorResponse('O valor total deve ser maior que zero antes de gerar códigos.');
-        }
-
         $created = [];
 
         DB::transaction(function () use (&$created, $configuration, $quantity) {
@@ -129,27 +125,44 @@ class CodeController extends Controller
             ->where('status', 'pending')
             ->count();
 
-        $allocated = (int) round(Code::where('configuration_id', $configuration->id)
-            ->where('status', 'used')
-            ->sum('value'));
-
-        $remainingValue = max(
-            0,
-            (int) round($configuration->total_value) - $allocated
+        $allocated = (int) round(
+            Code::where('configuration_id', $configuration->id)
+                ->where('status', 'used')
+                ->sum('value')
         );
 
-        if ($pendingCount <= 0 || $remainingValue <= 0) {
-            $this->errorResponse('Não há valor restante para distribuir.');
+        $remainingValue = max(0, (int) round($configuration->total_value) - $allocated);
+
+        if ($pendingCount <= 0) {
+            $this->errorResponse('Não há tokens pendentes para distribuir.');
         }
 
-        $bucket = $this->pickBucket($distribution);
-        return $this->pickValueWithinBucket($bucket, $remainingValue, $pendingCount);
+        // Sem prêmio é permitido: se não houver saldo ou nenhuma faixa couber no saldo,
+        // retorna 0 e mantém as faixas positivas sempre respeitadas.
+        if ($remainingValue <= 0) {
+            return 0;
+        }
+
+        $affordableDistribution = $distribution
+            ->filter(fn ($bucket) => (int) round($bucket['min'] ?? 0) <= $remainingValue)
+            ->values();
+
+        if ($affordableDistribution->isEmpty()) {
+            return 0;
+        }
+
+        $bucket = $this->pickBucket($affordableDistribution);
+        return $this->pickValueWithinBucket($bucket, $remainingValue);
     }
 
     private function prepareDistribution(Configuration $configuration)
     {
         return collect($configuration->distribution)
-            ->filter(fn ($bucket) => ($bucket['max'] ?? 0) >= ($bucket['min'] ?? 0) && ($bucket['weight'] ?? 0) > 0)
+            ->filter(
+                fn ($bucket) =>
+                ($bucket['max'] ?? 0) >= ($bucket['min'] ?? 0)
+                && ($bucket['weight'] ?? 0) > 0
+            )
             ->values()
             ->whenEmpty(function () {
                 $this->errorResponse('Distribuição inválida');
@@ -171,38 +184,19 @@ class CodeController extends Controller
         return $distribution->last();
     }
 
-    private function pickValueWithinBucket(array $bucket, int $remainingValue, int $remainingCount): int
+    private function pickValueWithinBucket(array $bucket, int $remainingValue): int
     {
         $min = max(0, (int) round($bucket['min']));
         $max = max($min, (int) round($bucket['max']));
 
-        $averageRemaining = $remainingCount > 0
-            ? (int) floor($remainingValue / $remainingCount)
-            : $remainingValue;
-        $effectiveMin = min($min, max(0, $averageRemaining));
-
-        if ($remainingCount <= 1) {
-            return max(0, min($remainingValue, $max));
+        if ($remainingValue < $min) {
+            return 0;
         }
 
-        $minAllowed = max($effectiveMin, $remainingValue - ($remainingCount - 1) * $max);
-        $maxAllowed = min($max, $remainingValue - ($remainingCount - 1) * $effectiveMin);
-
-        if ($minAllowed > $maxAllowed) {
-            $minAllowed = $maxAllowed = max(
-                $effectiveMin,
-                min($max, (int) floor($remainingValue / $remainingCount))
-            );
-        }
-
-        $value = $minAllowed >= $maxAllowed
-            ? $minAllowed
-            : random_int($minAllowed, $maxAllowed);
-        $value = min(
-            $value,
-            $remainingValue - max(0, $remainingCount - 1) * $effectiveMin
-        );
-        return max($effectiveMin, min($value, $max));
+        $maxAllowed = min($max, $remainingValue);
+        return $min >= $maxAllowed
+            ? $min
+            : random_int($min, $maxAllowed);
     }
 
     private function generateCode(): string

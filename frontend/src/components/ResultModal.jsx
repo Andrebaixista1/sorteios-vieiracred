@@ -3,19 +3,26 @@ function ResultModal({ value, onClose }) {
     return null
   }
 
+  const numericValue = Number(value)
+  const hasPrize = Number.isFinite(numericValue) && numericValue > 0
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="result-card" onClick={(event) => event.stopPropagation()}>
-        <p className="modal-flag">Parabéns!</p>
+        <p className="modal-flag">{hasPrize ? 'Parabéns!' : 'Sem prêmio'}</p>
         <p className="modal-value">
-          {Number(value).toLocaleString('pt-BR', {
-            style: 'currency',
-            currency: 'BRL',
-            minimumFractionDigits: 0,
-            maximumFractionDigits: 0,
-          })}
+          {hasPrize
+            ? numericValue.toLocaleString('pt-BR', {
+                style: 'currency',
+                currency: 'BRL',
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 0,
+              })
+            : 'R$ 0'}
         </p>
-        <span className="modal-subtitle">Toque para fechar</span>
+        <span className="modal-subtitle">
+          {hasPrize ? 'Toque para fechar' : 'Tente novamente com outro token'}
+        </span>
       </div>
     </div>
   )

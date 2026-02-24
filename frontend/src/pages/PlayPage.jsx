@@ -4,7 +4,6 @@ import ResultModal from '../components/ResultModal'
 import { checkToken, validateCode } from '../services/api'
 
 const COLORS = ['#3ed597', '#3cc7ff', '#f8b64c', '#ff5f7f', '#8462ff']
-
 const helperText = 'Digite o token recebido para liberar os balões'
 
 function PlayPage() {
@@ -49,20 +48,25 @@ function PlayPage() {
 
   async function handleBalloonPop() {
     if (!tokenValidated || popped) return
+
     setLoading(true)
     setError('')
     setMessage('')
 
     try {
       const response = await validateCode(inputCode.toUpperCase().trim())
+      const value = Number(response.value)
+
       setResult(response)
       setMessage(
-        `Prêmio liberado: ${Number(response.value).toLocaleString('pt-BR', {
-          style: 'currency',
-          currency: 'BRL',
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
-        })}`,
+        value > 0
+          ? `Prêmio liberado: ${value.toLocaleString('pt-BR', {
+              style: 'currency',
+              currency: 'BRL',
+              minimumFractionDigits: 0,
+              maximumFractionDigits: 0,
+            })}`
+          : 'Balão estourado: sem prêmio desta vez.',
       )
       setPopped(true)
       setTokenValidated(false)
@@ -99,6 +103,7 @@ function PlayPage() {
         {message && <p className="status-message">{message}</p>}
         {error && <p className="status-message error">{error}</p>}
       </div>
+
       <div className="balloon-stage">
         {tokenValidated && !popped ? (
           <BalloonGrid
@@ -114,6 +119,7 @@ function PlayPage() {
           </div>
         )}
       </div>
+
       <ResultModal value={result?.value ?? null} onClose={closeResult} />
     </section>
   )

@@ -25,26 +25,26 @@ class ConfigurationController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'total_balloons' => 'required|integer|min:1',
+            'total_balloons' => 'required|integer|min:40',
             'total_value' => 'required|numeric|min:0',
             'distribution' => 'required|array',
             'distribution.*.min' => 'required|numeric|min:0',
             'distribution.*.max' => 'required|numeric|min:0',
-            'distribution.*.weight' => 'required|numeric|min:0',
+            'distribution.*.weight' => 'required|numeric|min:0|max:50',
         ]);
 
         $distribution = array_map(function ($bucket) {
             return [
                 'min' => intval(round(floatval($bucket['min']))),
                 'max' => intval(round(floatval($bucket['max']))),
-                'weight' => round(floatval($bucket['weight']), 2),
+                'weight' => max(0, min(50, round(floatval($bucket['weight']), 2))),
             ];
         }, $validated['distribution']);
 
         $configuration = Configuration::updateOrCreate(
             ['name' => 'default'],
             [
-                'total_balloons' => $validated['total_balloons'],
+                'total_balloons' => intval($validated['total_balloons']),
                 'total_value' => intval(round(floatval($validated['total_value']))),
                 'distribution' => $distribution,
             ]

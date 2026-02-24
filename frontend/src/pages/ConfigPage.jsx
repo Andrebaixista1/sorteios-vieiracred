@@ -85,7 +85,7 @@ function ConfigPage() {
     () =>
       distribution.map((bucket) => ({
         ...bucket,
-        weight: Math.max(0, Number(bucket.weight ?? 0)),
+        weight: Math.min(50, Math.max(0, Number(bucket.weight ?? 0))),
         label: deriveBucketLabel(bucket),
       })),
     [distribution],
@@ -149,6 +149,10 @@ function ConfigPage() {
 
   async function handleSave() {
     if (!quantity || !totalValue) return
+    if (Number(quantity) < 40) {
+      setStatusMessage('A quantidade mínima é 40 balões')
+      return
+    }
 
     setSaving(true)
     setStatusMessage('')
@@ -198,7 +202,9 @@ function ConfigPage() {
   function updateBucket(index, value) {
     setDistribution((current) =>
       current.map((bucket, idx) =>
-        idx !== index ? bucket : { ...bucket, weight: Number(value) },
+        idx !== index
+          ? bucket
+          : { ...bucket, weight: Math.min(50, Math.max(0, Number(value))) },
       ),
     )
   }
@@ -213,7 +219,7 @@ function ConfigPage() {
     setDistribution((current) =>
       current.map((bucket) => ({
         ...bucket,
-        weight: 5 + Math.floor(Math.random() * 96),
+        weight: 1 + Math.floor(Math.random() * 50),
       })),
     )
   }
@@ -225,7 +231,7 @@ function ConfigPage() {
           <p className="label">Quantidade de balões</p>
           <input
             type="number"
-            min="1"
+            min="40"
             className="input-field"
             value={quantity}
             onChange={(event) => setQuantity(event.target.value)}
@@ -236,7 +242,7 @@ function ConfigPage() {
           <input
             type="number"
             min="0"
-            step="0.01"
+            step="1"
             className="input-field"
             value={totalValue}
             onChange={(event) => setTotalValue(event.target.value)}
@@ -283,7 +289,7 @@ function ConfigPage() {
                         <input
                           type="range"
                           min="0"
-                          max="100"
+                          max="50"
                           value={bucket.weight}
                           onChange={(event) =>
                             updateBucket(index, event.target.value)
@@ -370,7 +376,7 @@ function ConfigPage() {
                         </td>
                         <td>
                           {code.status === 'used'
-                            ? formatCurrency(code.value)
+                            ? Number(code.value) > 0 ? formatCurrency(code.value) : 'Sem prêmio'
                             : '—'}
                         </td>
                         <td className="table-status">
