@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import BalloonGrid from '../components/BalloonGrid'
 import ResultModal from '../components/ResultModal'
-import { getPlaySummary, popBalloon } from '../services/api'
+import { getPlaySummary, popBalloon, resetCodes } from '../services/api'
 
 const COLORS = ['#3ed597', '#3cc7ff', '#f8b64c', '#ff5f7f', '#8462ff']
 const helperText = 'Clique em um balão para estourar. O sorteio respeita a configuração salva.'
@@ -45,15 +45,34 @@ function getBalloonGridColumns(total) {
   return best
 }
 
+function getRemainingBalloonsFromResponse(response, fallbackTotal = 10) {
+  const total = Number(response?.summary?.remaining_balloons)
+  if (Number.isFinite(total)) {
+    return Math.max(0, total)
+  }
+
+  const used = Number(response?.summary?.used_tokens)
+  const configured = Number(response?.configuration?.total_balloons ?? fallbackTotal)
+  if (Number.isFinite(used) && Number.isFinite(configured)) {
+    return Math.max(0, configured - used)
+  }
+
+  return Math.max(0, fallbackTotal)
+}
+
 function PlayPage() {
   const [result, setResult] = useState(null)
+  const [balloonResultValue, setBalloonResultValue] = useState(null)
+  const [pendingFinalResult, setPendingFinalResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [popped, setPopped] = useState(false)
   const [burstIndex, setBurstIndex] = useState(null)
   const [playData, setPlayData] = useState(null)
-  const [sidebarLoading, setSidebarLoading] = useState(false)
+  const [revealedValues, setRevealedValues] = useState([])
+  const [resettingRound, setResettingRound] = useState(false)
+  const [showResetModal, setShowResetModal] = useState(false)
 
   const configuredBalloons = useMemo(() => {
     const total = Number(playData?.configuration?.total_balloons ?? 0)
@@ -61,7 +80,6 @@ function PlayPage() {
   }, [playData])
 
   const summary = playData?.summary ?? null
-  const recentUsed = playData?.recent_used ?? []
 
   const remainingBalloons = useMemo(() => {
     const total = Number(summary?.remaining_balloons)
@@ -77,8 +95,6 @@ function PlayPage() {
     return configuredBalloons
   }, [summary, configuredBalloons])
 
-  const poppedBalloons = Math.max(0, configuredBalloons - remainingBalloons)
-
   const balloonGridColumns = useMemo(
     () => getBalloonGridColumns(configuredBalloons),
     [configuredBalloons],
@@ -89,14 +105,19 @@ function PlayPage() {
   }, [])
 
   async function refreshPlaySummary() {
-    setSidebarLoading(true)
     try {
       const response = await getPlaySummary()
       setPlayData(response)
+      if (Number(response?.summary?.used_tokens ?? 0) === 0) {
+        setRevealedValues([])
+        setResult(null)
+        setPendingFinalResult(null)
+        setBalloonResultValue(null)
+      }
+      return response
     } catch (err) {
       setError((current) => current || err.message)
-    } finally {
-      setSidebarLoading(false)
+      return null
     }
   }
 
@@ -114,31 +135,106 @@ function PlayPage() {
     setBurstIndex(index)
 
     try {
-      const [response] = await Promise.all([popBalloon(), wait(550)])
+      const response = await popBalloon()
+      await wait(550)
       const value = Number(response?.value ?? 0)
+      const nextValue = Number.isFinite(value) ? value : 0
 
       setPopped(true)
-      await refreshPlaySummary()
-      setResult(response)
-      setMessage(
-        value > 0
-          ? `Prêmio liberado: ${formatCurrency(value)}`
-          : 'Balão estourado: sem prêmio desta vez.',
+      const summaryResponse = await refreshPlaySummary()
+
+      const nextResults = [...revealedValues, nextValue]
+      setRevealedValues(nextResults)
+
+      const nextRemaining = getRemainingBalloonsFromResponse(
+        summaryResponse,
+        configuredBalloons,
       )
+
+      if (nextRemaining <= 0) {
+        setPendingFinalResult({
+          values: nextResults,
+          totalAwarded:
+            Number(summaryResponse?.summary?.awarded_total) ||
+            nextResults.reduce((sum, item) => sum + Number(item || 0), 0),
+        })
+        setBalloonResultValue(nextValue)
+        setMessage('Rodada concluída. Veja o resultado final.')
+      } else {
+        setBalloonResultValue(nextValue)
+        setMessage('Balão estourado. Continue até o fim para ver todos os valores.')
+      }
     } catch (err) {
       setError(err.message)
       setBurstIndex(null)
+      setPopped(false)
     } finally {
       setLoading(false)
     }
   }
 
+  function openResetModal() {
+    if (loading || resettingRound) return
+
+    setError('')
+    setMessage('')
+    setShowResetModal(true)
+  }
+
+  function closeResetModal() {
+    if (resettingRound) return
+    setShowResetModal(false)
+  }
+
+  async function confirmResetRound() {
+    const configurationId = Number(playData?.configuration?.id)
+    if (!Number.isFinite(configurationId) || configurationId <= 0) {
+      setError('Configuração não encontrada para resetar a rodada.')
+      return
+    }
+
+    if (loading || resettingRound) return
+
+    setResettingRound(true)
+    setError('')
+    setMessage('')
+
+    try {
+      await resetCodes(configurationId, configuredBalloons)
+      setResult(null)
+      setPendingFinalResult(null)
+      setBalloonResultValue(null)
+      setPopped(false)
+      setBurstIndex(null)
+      setRevealedValues([])
+      await refreshPlaySummary()
+      setMessage('Rodada resetada com sucesso.')
+      setShowResetModal(false)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setResettingRound(false)
+    }
+  }
+
   function closeResult() {
+    if (balloonResultValue !== null) {
+      setBalloonResultValue(null)
+      setBurstIndex(null)
+
+      if (pendingFinalResult) {
+        setResult(pendingFinalResult)
+        setPendingFinalResult(null)
+        return
+      }
+
+      setPopped(false)
+      return
+    }
+
     setResult(null)
     setPopped(false)
     setBurstIndex(null)
-    setMessage('')
-    setError('')
   }
 
   return (
@@ -150,13 +246,23 @@ function PlayPage() {
             <p className="stage-subtitle">{helperText}</p>
             <div className="play-stats-grid">
               <div className="play-stat-box compact">
-                <span className="small-text">Balões configurados</span>
+                <span className="small-text">Total de balões</span>
                 <strong>{configuredBalloons}</strong>
               </div>
               <div className="play-stat-box compact">
-                <span className="small-text">Balões restantes</span>
-                <strong>{remainingBalloons}</strong>
+                <span className="small-text">Saldo total</span>
+                <strong>{formatCurrency(playData?.configuration?.total_value)}</strong>
               </div>
+            </div>
+            <div className="play-card-actions">
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={openResetModal}
+                disabled={loading || resettingRound}
+              >
+                {resettingRound ? 'Resetando...' : 'Resetar tokens'}
+              </button>
             </div>
             {message && <p className="status-message">{message}</p>}
             {error && <p className="status-message error">{error}</p>}
@@ -180,78 +286,48 @@ function PlayPage() {
             )}
           </div>
         </div>
-
-        <aside className="play-sidebar">
-          <div className="play-sidebar-card">
-            <div className="play-sidebar-header">
-              <h3>Painel da Rodada</h3>
-              {sidebarLoading && <span className="small-text">Atualizando...</span>}
-            </div>
-
-            <div className="play-stats-grid">
-              <div className="play-stat-box">
-                <span className="small-text">Balões configurados</span>
-                <strong>{configuredBalloons}</strong>
-              </div>
-              <div className="play-stat-box">
-                <span className="small-text">Balões restantes</span>
-                <strong>{remainingBalloons}</strong>
-              </div>
-              <div className="play-stat-box">
-                <span className="small-text">Saldo total</span>
-                <strong>{formatCurrency(playData?.configuration?.total_value)}</strong>
-              </div>
-              <div className="play-stat-box">
-                <span className="small-text">Distribuído</span>
-                <strong>{formatCurrency(summary?.awarded_total)}</strong>
-              </div>
-            </div>
-
-            <div className="play-stats-grid">
-              <div className="play-stat-box compact">
-                <span className="small-text">Balões estourados</span>
-                <strong>{poppedBalloons}</strong>
-              </div>
-              <div className="play-stat-box compact">
-                <span className="small-text">Saldo restante</span>
-                <strong>{formatCurrency(summary?.remaining_total)}</strong>
-              </div>
-              <div className="play-stat-box compact">
-                <span className="small-text">Registros pendentes</span>
-                <strong>{summary?.pending_tokens ?? 0}</strong>
-              </div>
-            </div>
-
-            <div className="play-history">
-              <div className="play-sidebar-header">
-                <h4>Últimos resultados</h4>
-              </div>
-
-              {recentUsed.length === 0 ? (
-                <p className="tokens-empty play-history-empty">
-                  Nenhum balão estourado ainda.
-                </p>
-              ) : (
-                <div className="play-history-list">
-                  {recentUsed.map((item, index) => (
-                    <div key={`${item.id}-${item.code}`} className="play-history-item">
-                      <div>
-                        <strong>{`Balão ${recentUsed.length - index}`}</strong>
-                        <p className="small-text">
-                          {item.value > 0 ? 'Premiado' : 'Sem prêmio'}
-                        </p>
-                      </div>
-                      <strong>{item.value > 0 ? formatCurrency(item.value) : 'R$ 0'}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </aside>
       </div>
 
-      <ResultModal value={result?.value ?? null} onClose={closeResult} />
+      <ResultModal
+        value={balloonResultValue}
+        results={result?.values ?? null}
+        totalValue={result?.totalAwarded ?? null}
+        onClose={closeResult}
+      />
+
+      {showResetModal && (
+        <div className="modal-overlay" onClick={closeResetModal}>
+          <div
+            className="result-card confirm-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="modal-flag">Resetar Rodada</p>
+            <p className="confirm-text">
+              Isso vai resetar a rodada atual e gerar novamente {configuredBalloons}{' '}
+              registros para o sorteio. Deseja continuar?
+            </p>
+
+            <div className="confirm-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={closeResetModal}
+                disabled={resettingRound}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={confirmResetRound}
+                disabled={resettingRound}
+              >
+                {resettingRound ? 'Resetando...' : 'Confirmar reset'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

@@ -623,13 +623,15 @@ body {
 
 .play-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.25rem;
   align-items: start;
 }
 
 .play-main {
   min-width: 0;
+  width: min(980px, 100%);
+  margin: 0 auto;
 }
 
 .play-card {
@@ -659,6 +661,12 @@ body {
 .stage-subtitle {
   color: var(--text-soft);
   margin-bottom: 1.5rem;
+}
+
+.play-card-actions {
+  margin-top: 0.9rem;
+  display: flex;
+  justify-content: center;
 }
 
 .code-form {
@@ -1016,6 +1024,63 @@ body {
 .confirm-card {
   min-width: min(440px, calc(100vw - 2rem));
   text-align: left;
+}
+
+.final-results-card {
+  width: min(520px, calc(100vw - 2rem));
+  max-height: min(80vh, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.final-results-table-wrap {
+  margin-top: 0.4rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  max-height: min(45vh, 360px);
+  overflow: auto;
+  text-align: left;
+}
+
+.final-results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.final-results-table th,
+.final-results-table td {
+  padding: 0.65rem 0.8rem;
+  text-align: left;
+}
+
+.final-results-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(8, 12, 35, 0.96);
+  color: var(--text-soft);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.final-results-table tbody td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-strong);
+}
+
+:root[data-theme='light'] .final-results-table-wrap {
+  border-color: rgba(16, 20, 51, 0.08);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+:root[data-theme='light'] .final-results-table thead th {
+  background: rgba(238, 243, 255, 0.98);
+  border-bottom-color: rgba(16, 20, 51, 0.1);
+}
+
+:root[data-theme='light'] .final-results-table tbody td {
+  border-bottom-color: rgba(16, 20, 51, 0.06);
 }
 
 .confirm-text {
