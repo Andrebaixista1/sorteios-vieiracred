@@ -24,25 +24,7 @@ function wait(ms) {
 function getBalloonGridColumns(total) {
   const amount = Number(total)
   if (!Number.isFinite(amount) || amount <= 1) return 1
-
-  if (amount % 10 === 0) return 10
-
-  let best = Math.min(amount, 8)
-  let bestScore = Number.POSITIVE_INFINITY
-
-  for (let candidate = 2; candidate <= Math.min(amount, 12); candidate += 1) {
-    const rows = Math.ceil(amount / candidate)
-    const emptySlots = candidate * rows - amount
-    const shapePenalty = Math.abs(candidate - rows)
-    const score = emptySlots * 10 + shapePenalty
-
-    if (score < bestScore) {
-      best = candidate
-      bestScore = score
-    }
-  }
-
-  return best
+  return Math.min(10, amount)
 }
 
 function getRemainingBalloonsFromResponse(response, fallbackTotal = 10) {
