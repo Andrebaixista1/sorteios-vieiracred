@@ -15,6 +15,9 @@ const DEFAULT_DISTRIBUTION = [
   { min: 61, max: 80, weight: 33 },
   { min: 81, max: 100, weight: 13 },
 ]
+const DEFAULT_PRANK_PERCENTAGE = 20
+const MIN_PRANK_PERCENTAGE = 0
+const MAX_PRANK_PERCENTAGE = 95
 
 const TAB_CONFIGURATION = 'configuration'
 const TAB_TOKENS = 'tokens'
@@ -75,6 +78,21 @@ function translateStatus(status) {
   return status
 }
 
+function clampPrankPercentage(value) {
+  const numeric = Math.round(Number(value ?? DEFAULT_PRANK_PERCENTAGE))
+  if (!Number.isFinite(numeric)) return DEFAULT_PRANK_PERCENTAGE
+  return Math.min(MAX_PRANK_PERCENTAGE, Math.max(MIN_PRANK_PERCENTAGE, numeric))
+}
+
+function getPrankBalloonCountFromPercentage(totalBalloons, prankPercentage) {
+  const total = Math.max(0, Math.round(Number(totalBalloons) || 0))
+  const percent = clampPrankPercentage(prankPercentage)
+  const requested = Math.round((total * percent) / 100)
+  const maxPranksKeepingMoney = Math.max(0, total - 1)
+
+  return Math.min(maxPranksKeepingMoney, Math.max(0, requested))
+}
+
 function toDisplayPercentages(items) {
   const weights = items.map((bucket) =>
     Math.min(MAX_BUCKET_WEIGHT, Math.max(MIN_BUCKET_WEIGHT, Number(bucket.weight ?? MIN_BUCKET_WEIGHT))),
@@ -131,6 +149,7 @@ function ConfigPage() {
   const [configuration, setConfiguration] = useState(null)
   const [quantity, setQuantity] = useState(50)
   const [totalValue, setTotalValue] = useState(700)
+  const [prankPercentage, setPrankPercentage] = useState(DEFAULT_PRANK_PERCENTAGE)
   const [distribution, setDistribution] = useState(() => mergeDistributionWithDefaults(DEFAULT_DISTRIBUTION))
   const [codes, setCodes] = useState([])
   const [toast, setToast] = useState(null)
@@ -235,6 +254,16 @@ function ConfigPage() {
 
   const quantityNumber = Math.max(0, Number(quantity) || 0)
   const totalValueNumber = Math.max(0, Number(totalValue) || 0)
+  const prankPercentageNumber = clampPrankPercentage(prankPercentage)
+  const prankBalloonCount = getPrankBalloonCountFromPercentage(
+    quantityNumber,
+    prankPercentageNumber,
+  )
+  const moneyBalloonCount = Math.max(0, quantityNumber - prankBalloonCount)
+  const prankChancePercent = prankPercentageNumber
+  const moneyChancePercent = Math.max(0, 100 - prankPercentageNumber)
+  const effectivePrankChancePercent =
+    quantityNumber > 0 ? Math.round((prankBalloonCount / quantityNumber) * 100) : 0
   const averagePerBalloon =
     quantityNumber > 0 ? Math.floor(totalValueNumber / quantityNumber) : 0
   const distinctPrizeValues = useMemo(
@@ -245,15 +274,15 @@ function ConfigPage() {
   const minimumNoZeroTotal = useMemo(
     () =>
       distinctPrizeValues
-        .slice(0, Math.max(0, quantityNumber))
+        .slice(0, Math.max(0, moneyBalloonCount))
         .reduce((sum, value) => sum + value, 0),
-    [distinctPrizeValues, quantityNumber],
+    [distinctPrizeValues, moneyBalloonCount],
   )
-  const hasEnoughUniquePrizes = availableUniquePrizeCount >= quantityNumber
+  const hasEnoughUniquePrizes = availableUniquePrizeCount >= moneyBalloonCount
   const hasNoZeroConfigIssue =
     !hasEnoughUniquePrizes || totalValueNumber < minimumNoZeroTotal
   const noZeroWarningText = !hasEnoughUniquePrizes
-    ? `Faixas insuficientes: apenas ${availableUniquePrizeCount} valores únicos para ${quantityNumber} balões sem repetir.`
+    ? `Faixas insuficientes: apenas ${availableUniquePrizeCount} valores únicos para ${moneyBalloonCount} balões de dinheiro sem repetir.`
     : totalValueNumber < minimumNoZeroTotal
       ? `Total insuficiente para evitar zerados. Mínimo necessário: ${formatCurrency(minimumNoZeroTotal)}.`
       : ''
@@ -278,6 +307,9 @@ function ConfigPage() {
       setConfiguration(response)
       setQuantity(response.total_balloons)
       setTotalValue(response.total_value)
+      setPrankPercentage(
+        response.prank_percentage ?? response.prank_chance_percent ?? DEFAULT_PRANK_PERCENTAGE,
+      )
       setDistribution(mergeDistributionWithDefaults(response.distribution))
     } catch (error) {
       showToast(error.message, 'error')
@@ -305,7 +337,7 @@ function ConfigPage() {
 
     if (!hasEnoughUniquePrizes) {
       showToast(
-        `Configuração impossível: existem apenas ${availableUniquePrizeCount} valores únicos disponíveis para ${quantityNumber} balões sem repetir.`,
+        `Configuração impossível: existem apenas ${availableUniquePrizeCount} valores únicos disponíveis para ${moneyBalloonCount} balões de dinheiro sem repetir.`,
         'error',
       )
       return
@@ -313,7 +345,7 @@ function ConfigPage() {
 
     if (totalValueNumber < minimumNoZeroTotal) {
       showToast(
-        `Para não zerar nenhum balão, o total mínimo é ${formatCurrency(minimumNoZeroTotal)}.`,
+        `Para não zerar nenhum balão de dinheiro, o total mínimo é ${formatCurrency(minimumNoZeroTotal)}.`,
         'error',
       )
       return
@@ -326,10 +358,12 @@ function ConfigPage() {
       const payload = {
         total_balloons: Number(quantity),
         total_value: Number(totalValue),
+        prank_percentage: prankPercentageNumber,
         distribution: distributionWithDefaults,
       }
       const response = await saveConfiguration(payload)
       setConfiguration(response)
+      setPrankPercentage(response?.prank_percentage ?? prankPercentageNumber)
       showToast('Configuração salva', 'success')
     } catch (error) {
       showToast(error.message, 'error')
@@ -489,7 +523,7 @@ function ConfigPage() {
           <strong>{formatCurrency(averagePerBalloon)}</strong>
         </div>
         <div className="config-summary-item">
-          <span className="small-text">Distribuição:</span>
+          <span className="small-text">Distribuição dinheiro:</span>
           <strong>{distributionTotal}%</strong>
         </div>
         <div className="config-summary-item">
@@ -533,6 +567,48 @@ function ConfigPage() {
                 </button>
 
                 <div className="distribution-grid">
+                  <div className="distribution-card prank-distribution-card">
+                    <p className="distribution-label">Chance de pegadinha</p>
+                    <div className="slider-row">
+                      <input
+                        type="range"
+                        min={MIN_PRANK_PERCENTAGE}
+                        max={MAX_PRANK_PERCENTAGE}
+                        value={prankPercentageNumber}
+                        onChange={(event) => setPrankPercentage(event.target.value)}
+                      />
+                      <span className="percentage">{prankPercentageNumber}%</span>
+                    </div>
+                    <p className="distribution-helper">
+                      Equivale a {prankBalloonCount} balões de pegadinha e {moneyBalloonCount} de dinheiro
+                    </p>
+                    <div className="play-chances-wrap" aria-label="Chance de pegadinhas e dinheiro">
+                      <div className="play-chances-labels">
+                        <span>Pegadinhas: {prankChancePercent}%</span>
+                        <span>Dinheiro: {moneyChancePercent}%</span>
+                      </div>
+                      <div
+                        className="play-chances-track"
+                        role="img"
+                        aria-label={`Chance de pegadinhas ${prankChancePercent} por cento e chance de dinheiro ${moneyChancePercent} por cento`}
+                      >
+                        <div
+                          className="play-chances-fill prank"
+                          style={{ width: `${prankChancePercent}%` }}
+                        />
+                        <div
+                          className="play-chances-fill money"
+                          style={{ width: `${moneyChancePercent}%` }}
+                        />
+                      </div>
+                    </div>
+                    {effectivePrankChancePercent !== prankChancePercent && (
+                      <p className="distribution-helper">
+                        Percentual efetivo na rodada atual: {effectivePrankChancePercent}% (arredondamento por quantidade de balões)
+                      </p>
+                    )}
+                  </div>
+
                   {distributionWithDefaults.map((bucket, index) => (
                     <div
                       key={`${bucket.min}-${bucket.max}-${index}`}

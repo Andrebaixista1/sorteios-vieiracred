@@ -12,6 +12,22 @@ use Illuminate\Support\Str;
 
 class CodeController extends Controller
 {
+    private const DEFAULT_PRANK_PERCENTAGE = 20;
+    private const MAX_PRANK_PERCENTAGE = 95;
+
+    private const DEFAULT_PRANKS = [
+        'Ganhe um abraco',
+        'Ganhe um cookie do seu super',
+        'Ganhe um abraco do gerente',
+        'Ganhe um abraco do CEO',
+        'Vale selfie com o time',
+        'Ganhe um cafezinho',
+        'Vale elogio em voz alta',
+        'Vale danca da vitoria (30s)',
+        'Ganhe um aperto de mao premium',
+        'Vale foto no mural dos campeoes',
+    ];
+
     public function index()
     {
         $configurationId = request()->query('configuration_id');
@@ -62,18 +78,20 @@ class CodeController extends Controller
         }
 
         $configuration = $code->configuration;
-        $value = $this->allocateValue($configuration);
+        $outcome = $this->allocateOutcome($configuration, $code->code);
 
         $code->update([
             'status' => 'used',
             'used_at' => now(),
-            'value' => $value,
+            'value' => $outcome['value'],
         ]);
 
         return response()->json([
             'success' => true,
             'code' => $code->code,
-            'value' => $code->value,
+            'value' => (int) round($code->value),
+            'result_type' => $outcome['result_type'],
+            'prank_label' => $outcome['prank_label'],
         ]);
     }
 
@@ -130,6 +148,7 @@ class CodeController extends Controller
             [
                 'total_balloons' => 50,
                 'total_value' => 0,
+                'prank_percentage' => self::DEFAULT_PRANK_PERCENTAGE,
                 'distribution' => $this->defaultDistribution(),
             ]
         );
@@ -158,18 +177,20 @@ class CodeController extends Controller
             ]);
         }
 
-        $value = $this->allocateValue($configuration);
+        $outcome = $this->allocateOutcome($configuration, $code->code);
 
         $code->update([
             'status' => 'used',
             'used_at' => now(),
-            'value' => $value,
+            'value' => $outcome['value'],
         ]);
 
         return response()->json([
             'success' => true,
             'value' => (int) round($code->value),
             'code' => $code->code,
+            'result_type' => $outcome['result_type'],
+            'prank_label' => $outcome['prank_label'],
         ]);
     }
 
@@ -180,6 +201,7 @@ class CodeController extends Controller
             [
                 'total_balloons' => 50,
                 'total_value' => 0,
+                'prank_percentage' => self::DEFAULT_PRANK_PERCENTAGE,
                 'distribution' => $this->defaultDistribution(),
             ]
         );
@@ -192,21 +214,37 @@ class CodeController extends Controller
         $totalValue = (int) round($configuration->total_value);
         $remainingTotal = max(0, $totalValue - $awardedTotal);
         $totalBalloons = (int) $configuration->total_balloons;
+        $prankBalloons = $this->getPrankBalloonCount($configuration);
+        $moneyBalloons = $this->getMoneyBalloonCount($configuration);
+        $prankChancePercent = $totalBalloons > 0
+            ? (int) round(($prankBalloons / $totalBalloons) * 100)
+            : 0;
+        $configuredPrankPercentage = $this->normalizePrankPercentage($configuration->prank_percentage ?? null);
         $usedBalloons = min($totalBalloons, (int) (clone $usedQuery)->count());
         $remainingBalloons = max(0, $totalBalloons - $usedBalloons);
+        $usedPranks = min(
+            $prankBalloons,
+            (int) (clone $usedQuery)->where('value', '<=', 0)->count()
+        );
 
         $recentUsed = (clone $usedQuery)
             ->orderByDesc('used_at')
             ->orderByDesc('id')
             ->limit(12)
             ->get(['id', 'code', 'value', 'status', 'used_at'])
-            ->map(fn (Code $code) => [
-                'id' => $code->id,
-                'code' => $code->code,
-                'value' => (int) round($code->value),
-                'status' => $code->status,
-                'used_at' => optional($code->used_at)->toISOString(),
-            ])
+            ->map(function (Code $code) {
+                $outcome = $this->buildOutcomePayload($code);
+
+                return [
+                    'id' => $code->id,
+                    'code' => $code->code,
+                    'value' => (int) round($code->value),
+                    'status' => $code->status,
+                    'result_type' => $outcome['result_type'],
+                    'prank_label' => $outcome['prank_label'],
+                    'used_at' => optional($code->used_at)->toISOString(),
+                ];
+            })
             ->values();
 
         return response()->json([
@@ -214,6 +252,11 @@ class CodeController extends Controller
                 'id' => $configuration->id,
                 'name' => $configuration->name,
                 'total_balloons' => (int) $configuration->total_balloons,
+                'money_balloons' => $moneyBalloons,
+                'prank_balloons' => $prankBalloons,
+                'prank_percentage' => $configuredPrankPercentage,
+                'prank_chance_percent' => $prankChancePercent,
+                'prank_options' => $this->getPrankOptions(),
                 'total_value' => $totalValue,
                 'distribution' => $configuration->distribution,
             ],
@@ -225,6 +268,8 @@ class CodeController extends Controller
                 'remaining_total' => $remainingTotal,
                 'used_balloons' => $usedBalloons,
                 'remaining_balloons' => $remainingBalloons,
+                'used_pranks' => $usedPranks,
+                'remaining_pranks' => max(0, $prankBalloons - $usedPranks),
             ],
             'recent_used' => $recentUsed,
         ]);
@@ -265,10 +310,12 @@ class CodeController extends Controller
     {
         $distribution = $this->prepareDistribution($configuration);
 
-        $usedCount = (int) Code::where('configuration_id', $configuration->id)
+        $totalMoneyBalloons = $this->getMoneyBalloonCount($configuration);
+        $usedMoneyCount = (int) Code::where('configuration_id', $configuration->id)
             ->where('status', 'used')
+            ->where('value', '>', 0)
             ->count();
-        $remainingBalloons = max(0, (int) $configuration->total_balloons - $usedCount);
+        $remainingMoneyBalloons = max(0, $totalMoneyBalloons - $usedMoneyCount);
 
         $allocated = (int) round(
             Code::where('configuration_id', $configuration->id)
@@ -287,7 +334,7 @@ class CodeController extends Controller
             ->all();
         $usedValueLookup = array_fill_keys($usedPositiveValues, true);
 
-        if ($remainingBalloons <= 0) {
+        if ($remainingMoneyBalloons <= 0) {
             $this->errorResponse('Nao ha baloes restantes para distribuir.');
         }
 
@@ -301,7 +348,7 @@ class CodeController extends Controller
             $usedValueLookup,
         );
 
-        if (!$this->canReachExactTotal($allAvailableValues, $remainingBalloons, $remainingValue)) {
+        if (!$this->canReachExactTotal($allAvailableValues, $remainingMoneyBalloons, $remainingValue)) {
             $this->errorResponse('Nao foi possivel fechar o valor total com os baloes restantes.');
         }
 
@@ -324,7 +371,7 @@ class CodeController extends Controller
                 if ($this->canFinishAfterChoosingValue(
                     $candidateValue,
                     $allAvailableValues,
-                    $remainingBalloons,
+                    $remainingMoneyBalloons,
                     $remainingValue,
                     $feasibilityCache,
                 )) {
@@ -348,6 +395,23 @@ class CodeController extends Controller
         $values = $bucket['feasible_values'];
 
         return (int) $values[array_rand($values)];
+    }
+
+    private function allocateOutcome(Configuration $configuration, ?string $code = null): array
+    {
+        if ($this->shouldAssignPrank($configuration)) {
+            return [
+                'value' => 0,
+                'result_type' => 'prank',
+                'prank_label' => $this->pickPrankLabel($code),
+            ];
+        }
+
+        return [
+            'value' => $this->allocateValue($configuration),
+            'result_type' => 'money',
+            'prank_label' => null,
+        ];
     }
 
     private function prepareDistribution(Configuration $configuration)
@@ -562,6 +626,92 @@ class CodeController extends Controller
         throw new HttpResponseException(
             response()->json(['message' => $message], $status)
         );
+    }
+
+    private function getPrankOptions(): array
+    {
+        return self::DEFAULT_PRANKS;
+    }
+
+    private function getPrankBalloonCount(Configuration $configuration): int
+    {
+        $totalBalloons = max(0, (int) $configuration->total_balloons);
+        $prankPercentage = $this->normalizePrankPercentage($configuration->prank_percentage ?? null);
+        $maxPranksKeepingMoney = max(0, $totalBalloons - 1);
+        $requestedPranks = (int) round(($totalBalloons * $prankPercentage) / 100);
+
+        return min($maxPranksKeepingMoney, max(0, $requestedPranks));
+    }
+
+    private function getMoneyBalloonCount(Configuration $configuration): int
+    {
+        return max(0, (int) $configuration->total_balloons - $this->getPrankBalloonCount($configuration));
+    }
+
+    private function shouldAssignPrank(Configuration $configuration): bool
+    {
+        $configurationId = $configuration->id;
+        $totalBalloons = max(0, (int) $configuration->total_balloons);
+        $totalPranks = $this->getPrankBalloonCount($configuration);
+
+        if ($configurationId <= 0 || $totalBalloons <= 0 || $totalPranks <= 0) {
+            return false;
+        }
+
+        $usedCount = (int) Code::where('configuration_id', $configurationId)
+            ->where('status', 'used')
+            ->count();
+        $usedPranks = (int) Code::where('configuration_id', $configurationId)
+            ->where('status', 'used')
+            ->where('value', '<=', 0)
+            ->count();
+
+        $remainingPops = max(0, $totalBalloons - $usedCount);
+        $remainingPranks = max(0, $totalPranks - $usedPranks);
+
+        if ($remainingPranks <= 0 || $remainingPops <= 0) {
+            return false;
+        }
+
+        if ($remainingPranks >= $remainingPops) {
+            return true;
+        }
+
+        return random_int(1, $remainingPops) <= $remainingPranks;
+    }
+
+    private function pickPrankLabel(?string $seed = null): string
+    {
+        $options = $this->getPrankOptions();
+        if (empty($options)) {
+            return 'Pegadinha surpresa';
+        }
+
+        if ($seed === null || $seed === '') {
+            return $options[array_rand($options)];
+        }
+
+        $hash = (int) sprintf('%u', crc32(strtoupper((string) $seed)));
+        $index = $hash % count($options);
+
+        return $options[$index];
+    }
+
+    private function buildOutcomePayload(Code $code): array
+    {
+        $isPrank = ((float) $code->value) <= 0;
+
+        return [
+            'result_type' => $isPrank ? 'prank' : 'money',
+            'prank_label' => $isPrank ? $this->pickPrankLabel($code->code) : null,
+        ];
+    }
+
+    private function normalizePrankPercentage($value): int
+    {
+        $numeric = (int) round(floatval($value ?? self::DEFAULT_PRANK_PERCENTAGE));
+
+        return max(0, min(self::MAX_PRANK_PERCENTAGE, $numeric));
     }
 
     private function defaultDistribution(): array

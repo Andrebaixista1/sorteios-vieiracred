@@ -139,11 +139,16 @@ function PlayPage() {
       await wait(550)
       const value = Number(response?.value ?? 0)
       const nextValue = Number.isFinite(value) ? value : 0
+      const nextOutcome = {
+        type: response?.result_type === 'prank' ? 'prank' : 'money',
+        value: nextValue,
+        prankLabel: response?.prank_label ?? null,
+      }
 
       setPopped(true)
       const summaryResponse = await refreshPlaySummary()
 
-      const nextResults = [...revealedValues, nextValue]
+      const nextResults = [...revealedValues, nextOutcome]
       setRevealedValues(nextResults)
 
       const nextRemaining = getRemainingBalloonsFromResponse(
@@ -156,13 +161,13 @@ function PlayPage() {
           values: nextResults,
           totalAwarded:
             Number(summaryResponse?.summary?.awarded_total) ||
-            nextResults.reduce((sum, item) => sum + Number(item || 0), 0),
+            nextResults.reduce((sum, item) => sum + Number(item?.value || 0), 0),
         })
-        setBalloonResultValue(nextValue)
+        setBalloonResultValue(nextOutcome)
         setMessage('Rodada concluída. Veja o resultado final.')
       } else {
-        setBalloonResultValue(nextValue)
-        setMessage('Balão estourado. Continue até o fim para ver todos os valores.')
+        setBalloonResultValue(nextOutcome)
+        setMessage('Balão estourado. Continue até o fim para ver todos os resultados.')
       }
     } catch (err) {
       setError(err.message)

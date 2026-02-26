@@ -9,6 +9,22 @@ use Illuminate\Http\Request;
 
 class ConfigurationController extends Controller
 {
+    private const DEFAULT_PRANK_PERCENTAGE = 20;
+    private const MAX_PRANK_PERCENTAGE = 95;
+
+    private const DEFAULT_PRANKS = [
+        'Ganhe um abraco',
+        'Ganhe um cookie do seu super',
+        'Ganhe um abraco do gerente',
+        'Ganhe um abraco do CEO',
+        'Vale selfie com o time',
+        'Ganhe um cafezinho',
+        'Vale elogio em voz alta',
+        'Vale danca da vitoria (30s)',
+        'Ganhe um aperto de mao premium',
+        'Vale foto no mural dos campeoes',
+    ];
+
     public function show()
     {
         $configuration = Configuration::firstOrCreate(
@@ -16,11 +32,12 @@ class ConfigurationController extends Controller
             [
                 'total_balloons' => 50,
                 'total_value' => 0,
+                'prank_percentage' => self::DEFAULT_PRANK_PERCENTAGE,
                 'distribution' => $this->defaultDistribution(),
             ]
         );
 
-        return response()->json($configuration);
+        return response()->json($this->appendPrankMeta($configuration));
     }
 
     public function store(Request $request)
@@ -28,6 +45,7 @@ class ConfigurationController extends Controller
         $validated = $request->validate([
             'total_balloons' => 'required|integer|min:10',
             'total_value' => 'required|numeric|min:0',
+            'prank_percentage' => 'nullable|numeric|min:0|max:95',
             'distribution' => 'required|array',
             'distribution.*.min' => 'required|numeric|min:0',
             'distribution.*.max' => 'required|numeric|min:0',
@@ -44,15 +62,19 @@ class ConfigurationController extends Controller
 
         $totalBalloons = intval($validated['total_balloons']);
         $totalValue = intval(round(floatval($validated['total_value'])));
+        $prankPercentage = $this->normalizePrankPercentage($validated['prank_percentage'] ?? null);
+        $prankBalloons = $this->getPrankBalloonCount($totalBalloons, $prankPercentage);
+        $moneyBalloons = max(0, $totalBalloons - $prankBalloons);
+
         [$availableUniqueCount, $minimumNoZeroTotal] = $this->calculateMinimumNoZero(
             $distribution,
-            $totalBalloons,
+            $moneyBalloons,
         );
 
-        if ($availableUniqueCount < $totalBalloons) {
+        if ($availableUniqueCount < $moneyBalloons) {
             throw new HttpResponseException(
                 response()->json([
-                    'message' => "Configuração impossível: existem apenas {$availableUniqueCount} valores únicos para {$totalBalloons} balões sem repetir.",
+                    'message' => "Configuracao impossivel: existem apenas {$availableUniqueCount} valores unicos para {$moneyBalloons} baloes de dinheiro sem repetir.",
                 ], 422)
             );
         }
@@ -60,7 +82,7 @@ class ConfigurationController extends Controller
         if ($totalValue < $minimumNoZeroTotal) {
             throw new HttpResponseException(
                 response()->json([
-                    'message' => 'Total insuficiente para evitar prêmio zerado. Mínimo: R$ ' . $minimumNoZeroTotal . '.',
+                    'message' => 'Total insuficiente para evitar premio zerado. Minimo: R$ ' . $minimumNoZeroTotal . '.',
                 ], 422)
             );
         }
@@ -70,11 +92,12 @@ class ConfigurationController extends Controller
             [
                 'total_balloons' => $totalBalloons,
                 'total_value' => $totalValue,
+                'prank_percentage' => $prankPercentage,
                 'distribution' => $distribution,
             ]
         );
 
-        return response()->json($configuration);
+        return response()->json($this->appendPrankMeta($configuration));
     }
 
     private function defaultDistribution(): array
@@ -116,5 +139,38 @@ class ConfigurationController extends Controller
 
         return [count($distinctValues), intval($minimumTotal)];
     }
-}
 
+    private function normalizePrankPercentage($value): int
+    {
+        $numeric = intval(round(floatval($value ?? self::DEFAULT_PRANK_PERCENTAGE)));
+
+        return max(0, min(self::MAX_PRANK_PERCENTAGE, $numeric));
+    }
+
+    private function getPrankBalloonCount(int $totalBalloons, int $prankPercentage): int
+    {
+        $maxPranksKeepingMoney = max(0, $totalBalloons - 1);
+        $requestedPranks = (int) round(($totalBalloons * max(0, $prankPercentage)) / 100);
+
+        return min($maxPranksKeepingMoney, max(0, $requestedPranks));
+    }
+
+    private function appendPrankMeta(Configuration $configuration): array
+    {
+        $data = $configuration->toArray();
+        $totalBalloons = intval($configuration->total_balloons);
+        $prankPercentage = $this->normalizePrankPercentage($configuration->prank_percentage ?? null);
+        $prankBalloons = $this->getPrankBalloonCount($totalBalloons, $prankPercentage);
+        $moneyBalloons = max(0, $totalBalloons - $prankBalloons);
+
+        $data['prank_percentage'] = $prankPercentage;
+        $data['prank_balloons'] = $prankBalloons;
+        $data['money_balloons'] = $moneyBalloons;
+        $data['prank_chance_percent'] = $totalBalloons > 0
+            ? intval(round(($prankBalloons / $totalBalloons) * 100))
+            : 0;
+        $data['prank_options'] = self::DEFAULT_PRANKS;
+
+        return $data;
+    }
+}

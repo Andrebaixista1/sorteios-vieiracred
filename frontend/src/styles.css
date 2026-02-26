@@ -422,14 +422,36 @@ body {
   gap: 0.5rem;
 }
 
+.prank-distribution-card {
+  gap: 0.4rem;
+  padding: 0.85rem 1rem;
+  border-color: rgba(255, 173, 66, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 184, 77, 0.1), rgba(255, 95, 127, 0.06)),
+    rgba(255, 255, 255, 0.03);
+}
+
 :root[data-theme='light'] .distribution-card {
   background: rgba(255, 255, 255, 0.85);
   border-color: rgba(16, 20, 51, 0.08);
 }
 
+:root[data-theme='light'] .prank-distribution-card {
+  border-color: rgba(230, 145, 35, 0.18);
+  background:
+    linear-gradient(135deg, rgba(255, 183, 77, 0.12), rgba(255, 106, 138, 0.05)),
+    rgba(255, 255, 255, 0.88);
+}
+
 .distribution-label {
   margin: 0;
   font-weight: 600;
+}
+
+.distribution-helper {
+  margin: -0.1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-soft);
 }
 
 .slider-row {
@@ -667,6 +689,104 @@ body {
   margin-top: 0.9rem;
   display: flex;
   justify-content: center;
+}
+
+.play-pranks-bar {
+  margin-top: 0.95rem;
+  padding: 0.9rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(255, 173, 66, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 184, 77, 0.12), rgba(255, 95, 127, 0.08)),
+    rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 0.7rem;
+  text-align: left;
+}
+
+.play-pranks-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.play-pranks-header strong {
+  font-size: 0.95rem;
+  color: #ffd27a;
+}
+
+.play-pranks-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.play-chances-wrap {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.play-chances-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+
+.play-chances-track {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+}
+
+.play-chances-fill {
+  height: 100%;
+}
+
+.play-chances-fill.prank {
+  background: linear-gradient(135deg, #ffb84d, #ff5f7f);
+}
+
+.play-chances-fill.money {
+  background: linear-gradient(135deg, #1dd7ba, #2b97ff);
+}
+
+.play-prank-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: var(--text-strong);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme='light'] .play-pranks-bar {
+  border-color: rgba(230, 145, 35, 0.2);
+  background:
+    linear-gradient(135deg, rgba(255, 183, 77, 0.14), rgba(255, 106, 138, 0.08)),
+    rgba(255, 255, 255, 0.82);
+}
+
+:root[data-theme='light'] .play-pranks-header strong {
+  color: #a75d00;
+}
+
+:root[data-theme='light'] .play-prank-chip {
+  border-color: rgba(16, 20, 51, 0.08);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+:root[data-theme='light'] .play-chances-track {
+  border-color: rgba(16, 20, 51, 0.1);
+  background: rgba(16, 20, 51, 0.04);
 }
 
 .code-form {
@@ -1014,6 +1134,12 @@ body {
   font-size: 2.3rem;
   margin: 0.5rem 0;
   font-weight: 700;
+}
+
+.modal-prank-text {
+  font-size: 1.35rem;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .modal-subtitle {
