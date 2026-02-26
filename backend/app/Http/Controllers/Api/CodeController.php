@@ -16,14 +16,13 @@ class CodeController extends Controller
     private const MAX_PRANK_PERCENTAGE = 95;
 
     private const DEFAULT_PRANKS = [
-        'Ganhe um abraço',
-        'Ganhe um abraço do gerente',
-        'Vale elogio em voz alta',
-        'Ganhe um aperto de mão premium',
-        'Ganhe um abraço do Wesley',
-        'Fica de boas não foi dessa vez',
-        'Vai ter que fazer uma dancinha (30s)',
-        'Vale um cookie pago pela Angela',
+        'Ganhe um doce do Hugo',
+        'Ganhe um doce do Ryan',
+        'Ganhe um doce da Jheni',
+        'Não foi dessa vez',
+        'Dança gatinho (30s)',
+        'Vale PIX $10 (sem nada você não fica)',
+        'Ganhe PIX $5 (da Jeeh Rainha)',
     ];
 
     public function index()
