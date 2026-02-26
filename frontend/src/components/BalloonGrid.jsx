@@ -9,6 +9,7 @@ const defaultColors = [
 function BalloonGrid({
   total,
   slotsTotal,
+  activeSlots = null,
   rows = 5,
   columns = 7,
   colors = defaultColors,
@@ -33,7 +34,11 @@ function BalloonGrid({
       }}
     >
       {Array.from({ length: totalSlots }).map((_, index) => {
-        if (index >= balloonTotal) {
+        const isActive = Array.isArray(activeSlots)
+          ? Boolean(activeSlots[index])
+          : index < balloonTotal
+
+        if (!isActive) {
           return (
             <div
               key={`empty-${index}`}
@@ -46,7 +51,7 @@ function BalloonGrid({
         const color = colors[index % colors.length]
         const tilt = ((index % 5) - 2) * 2
         const handleClick = () => {
-          if (disabled) return
+          if (disabled || !isActive) return
           onPop?.(index)
         }
 

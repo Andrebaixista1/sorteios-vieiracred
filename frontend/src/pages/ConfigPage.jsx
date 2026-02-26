@@ -46,14 +46,15 @@ function formatAmount(value) {
   return value % 1 === 0 ? `${value}` : value.toFixed(2)
 }
 
-function deriveBucketLabel(bucket) {
+function deriveBucketLabel(bucket, options = {}) {
+  const isOpenEnded = Boolean(options?.isOpenEnded)
   const minValue = Number(bucket?.min ?? 0)
   const maxValue = Number(bucket?.max ?? minValue)
   const min = Number.isFinite(minValue) ? minValue : 0
   const max = Number.isFinite(maxValue) ? maxValue : min
 
   if (min === max) return `R$${formatAmount(min)}`
-  if (min >= 100) return `R$${formatAmount(min)}+`
+  if (isOpenEnded || min >= 100) return `R$${formatAmount(min)}+`
   return `R$${formatAmount(min)}-${formatAmount(max)}`
 }
 
@@ -203,13 +204,27 @@ function ConfigPage() {
           Math.max(MIN_BUCKET_WEIGHT, Number(bucket.weight ?? MIN_BUCKET_WEIGHT)),
         ),
       }))
+      const topBucketIndex = normalized.reduce((bestIndex, bucket, index, items) => {
+        if (bestIndex < 0) return index
+
+        const current = items[bestIndex]
+        const bucketMax = Number(bucket?.max ?? bucket?.min ?? 0)
+        const currentMax = Number(current?.max ?? current?.min ?? 0)
+        if (bucketMax > currentMax) return index
+
+        const bucketMin = Number(bucket?.min ?? 0)
+        const currentMin = Number(current?.min ?? 0)
+        if (bucketMax === currentMax && bucketMin >= currentMin) return index
+
+        return bestIndex
+      }, -1)
 
       const displayPercentages = toDisplayPercentages(normalized)
 
       return normalized.map((bucket, index) => ({
         ...bucket,
         displayPercent: displayPercentages[index] ?? 0,
-        label: deriveBucketLabel(bucket),
+        label: deriveBucketLabel(bucket, { isOpenEnded: index === topBucketIndex }),
       }))
     },
     [distribution],
@@ -280,7 +295,8 @@ function ConfigPage() {
   )
   const hasEnoughUniquePrizes = availableUniquePrizeCount >= moneyBalloonCount
   const hasNoZeroConfigIssue =
-    !hasEnoughUniquePrizes || totalValueNumber < minimumNoZeroTotal
+    !hasEnoughUniquePrizes ||
+    totalValueNumber < minimumNoZeroTotal
   const noZeroWarningText = !hasEnoughUniquePrizes
     ? `Faixas insuficientes: apenas ${availableUniquePrizeCount} valores únicos para ${moneyBalloonCount} balões de dinheiro sem repetir.`
     : totalValueNumber < minimumNoZeroTotal
@@ -461,6 +477,11 @@ function ConfigPage() {
   }
 
   function randomizeDistribution() {
+    setPrankPercentage(
+      MIN_PRANK_PERCENTAGE +
+        Math.floor(Math.random() * (MAX_PRANK_PERCENTAGE - MIN_PRANK_PERCENTAGE + 1)),
+    )
+
     setDistribution((current) =>
       current.map((bucket) => ({
         ...bucket,

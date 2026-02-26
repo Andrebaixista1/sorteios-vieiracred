@@ -60,6 +60,16 @@ function getRemainingBalloonsFromResponse(response, fallbackTotal = 10) {
   return Math.max(0, fallbackTotal)
 }
 
+function getUsedResultsFromSummaryResponse(response) {
+  if (!Array.isArray(response?.used_results)) return []
+
+  return response.used_results.map((item) => ({
+    type: item?.result_type === 'prank' ? 'prank' : 'money',
+    value: Number.isFinite(Number(item?.value)) ? Number(item.value) : 0,
+    prankLabel: item?.prank_label ?? null,
+  }))
+}
+
 function PlayPage() {
   const [result, setResult] = useState(null)
   const [balloonResultValue, setBalloonResultValue] = useState(null)
@@ -108,11 +118,15 @@ function PlayPage() {
     try {
       const response = await getPlaySummary()
       setPlayData(response)
+      const usedResults = getUsedResultsFromSummaryResponse(response)
+
       if (Number(response?.summary?.used_tokens ?? 0) === 0) {
         setRevealedValues([])
         setResult(null)
         setPendingFinalResult(null)
         setBalloonResultValue(null)
+      } else if (usedResults.length > 0) {
+        setRevealedValues(usedResults)
       }
       return response
     } catch (err) {
@@ -148,7 +162,9 @@ function PlayPage() {
       setPopped(true)
       const summaryResponse = await refreshPlaySummary()
 
-      const nextResults = [...revealedValues, nextOutcome]
+      const syncedResults = getUsedResultsFromSummaryResponse(summaryResponse)
+      const nextResults =
+        syncedResults.length > 0 ? syncedResults : [...revealedValues, nextOutcome]
       setRevealedValues(nextResults)
 
       const nextRemaining = getRemainingBalloonsFromResponse(

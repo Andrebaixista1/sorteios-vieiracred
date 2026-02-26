@@ -16,16 +16,14 @@ class CodeController extends Controller
     private const MAX_PRANK_PERCENTAGE = 95;
 
     private const DEFAULT_PRANKS = [
-        'Ganhe um abraco',
-        'Ganhe um cookie do seu super',
-        'Ganhe um abraco do gerente',
-        'Ganhe um abraco do CEO',
-        'Vale selfie com o time',
-        'Ganhe um cafezinho',
+        'Ganhe um abraço',
+        'Ganhe um abraço do gerente',
         'Vale elogio em voz alta',
-        'Vale danca da vitoria (30s)',
-        'Ganhe um aperto de mao premium',
-        'Vale foto no mural dos campeoes',
+        'Ganhe um aperto de mão premium',
+        'Ganhe um abraço do Wesley',
+        'Fica de boas não foi dessa vez',
+        'Vai ter que fazer uma dancinha (30s)',
+        'Vale um cookie pago pela Angela',
     ];
 
     public function index()
@@ -232,19 +230,14 @@ class CodeController extends Controller
             ->orderByDesc('id')
             ->limit(12)
             ->get(['id', 'code', 'value', 'status', 'used_at'])
-            ->map(function (Code $code) {
-                $outcome = $this->buildOutcomePayload($code);
+            ->map(fn (Code $code) => $this->serializeUsedCodeResult($code))
+            ->values();
 
-                return [
-                    'id' => $code->id,
-                    'code' => $code->code,
-                    'value' => (int) round($code->value),
-                    'status' => $code->status,
-                    'result_type' => $outcome['result_type'],
-                    'prank_label' => $outcome['prank_label'],
-                    'used_at' => optional($code->used_at)->toISOString(),
-                ];
-            })
+        $usedResults = (clone $usedQuery)
+            ->orderBy('used_at')
+            ->orderBy('id')
+            ->get(['id', 'code', 'value', 'status', 'used_at'])
+            ->map(fn (Code $code) => $this->serializeUsedCodeResult($code))
             ->values();
 
         return response()->json([
@@ -272,6 +265,7 @@ class CodeController extends Controller
                 'remaining_pranks' => max(0, $prankBalloons - $usedPranks),
             ],
             'recent_used' => $recentUsed,
+            'used_results' => $usedResults,
         ]);
     }
 
@@ -309,6 +303,7 @@ class CodeController extends Controller
     private function allocateValue(Configuration $configuration): int
     {
         $distribution = $this->prepareDistribution($configuration);
+        $distribution = $this->markTopBucketAsOpenEnded($distribution);
 
         $totalMoneyBalloons = $this->getMoneyBalloonCount($configuration);
         $usedMoneyCount = (int) Code::where('configuration_id', $configuration->id)
@@ -340,6 +335,10 @@ class CodeController extends Controller
 
         if ($remainingValue <= 0) {
             return 0;
+        }
+
+        if ($remainingMoneyBalloons === 1 && !isset($usedValueLookup[$remainingValue])) {
+            return $remainingValue;
         }
 
         $allAvailableValues = $this->getAvailableUniqueValues(
@@ -391,10 +390,13 @@ class CodeController extends Controller
             $this->errorResponse('Nao foi possivel encontrar premio valido para fechar o total.');
         }
 
-        $bucket = $this->pickBucket(collect($bucketCandidates));
-        $values = $bucket['feasible_values'];
-
-        return (int) $values[array_rand($values)];
+        return $this->pickBalancedFeasibleValue(
+            $bucketCandidates,
+            $remainingValue,
+            $remainingMoneyBalloons,
+            $usedMoneyCount,
+            $totalMoneyBalloons,
+        );
     }
 
     private function allocateOutcome(Configuration $configuration, ?string $code = null): array
@@ -428,6 +430,38 @@ class CodeController extends Controller
             });
     }
 
+    private function markTopBucketAsOpenEnded($distribution)
+    {
+        if (!$distribution || $distribution->isEmpty()) {
+            return $distribution;
+        }
+
+        $topIndex = null;
+        $topMax = PHP_INT_MIN;
+        $topMin = PHP_INT_MIN;
+
+        foreach ($distribution as $index => $bucket) {
+            $bucketMax = (int) round($bucket['max'] ?? 0);
+            $bucketMin = (int) round($bucket['min'] ?? 0);
+
+            if (
+                $bucketMax > $topMax
+                || ($bucketMax === $topMax && $bucketMin >= $topMin)
+            ) {
+                $topIndex = $index;
+                $topMax = $bucketMax;
+                $topMin = $bucketMin;
+            }
+        }
+
+        return $distribution
+            ->map(function ($bucket, $index) use ($topIndex) {
+                $bucket['open_ended'] = $index === $topIndex;
+                return $bucket;
+            })
+            ->values();
+    }
+
     private function pickBucket($distribution)
     {
         $totalWeight = $distribution->sum('weight');
@@ -443,11 +477,80 @@ class CodeController extends Controller
         return $distribution->last();
     }
 
+    private function pickBalancedFeasibleValue(
+        array $bucketCandidates,
+        int $remainingValue,
+        int $remainingMoneyBalloons,
+        int $usedMoneyCount,
+        int $totalMoneyBalloons
+    ): int {
+        $average = $remainingMoneyBalloons > 0
+            ? ($remainingValue / $remainingMoneyBalloons)
+            : $remainingValue;
+
+        // Rotate the target slightly to avoid visible clustering while keeping
+        // the round balanced and still solvable.
+        $pattern = [0.92, 1.08, 1.0];
+        $factor = $pattern[$usedMoneyCount % count($pattern)] ?? 1.0;
+        $target = max(1, $average * $factor);
+
+        $weightedValues = [];
+
+        foreach ($bucketCandidates as $bucket) {
+            $bucketWeight = max(1.0, (float) ($bucket['weight'] ?? 1));
+            foreach (($bucket['feasible_values'] ?? []) as $candidateValue) {
+                $value = (int) $candidateValue;
+                $distanceRatio = abs($value - $target) / max(1.0, $average);
+                $balanceWeight = 1 / (1 + ($distanceRatio * 2.2));
+                $weight = $bucketWeight * $balanceWeight;
+
+                if (!isset($weightedValues[$value])) {
+                    $weightedValues[$value] = 0.0;
+                }
+
+                $weightedValues[$value] += $weight;
+            }
+        }
+
+        if (empty($weightedValues)) {
+            $this->errorResponse('Nao foi possivel selecionar valor balanceado.');
+        }
+
+        return $this->pickWeightedNumericValue($weightedValues);
+    }
+
+    private function pickWeightedNumericValue(array $weightedValues): int
+    {
+        $totalWeight = 0.0;
+        foreach ($weightedValues as $weight) {
+            $totalWeight += max(0.0, (float) $weight);
+        }
+
+        if ($totalWeight <= 0) {
+            $keys = array_keys($weightedValues);
+            return (int) $keys[array_rand($keys)];
+        }
+
+        $cursor = (mt_rand() / mt_getrandmax()) * $totalWeight;
+
+        foreach ($weightedValues as $value => $weight) {
+            $cursor -= max(0.0, (float) $weight);
+            if ($cursor <= 0) {
+                return (int) $value;
+            }
+        }
+
+        $keys = array_keys($weightedValues);
+
+        return (int) end($keys);
+    }
+
     private function bucketHasAvailableUniqueValue(array $bucket, int $remainingValue, array $usedValueLookup): bool
     {
         $min = max(0, (int) round($bucket['min']));
         $max = max($min, (int) round($bucket['max']));
-        $maxAllowed = min($max, $remainingValue);
+        $isOpenEnded = (bool) ($bucket['open_ended'] ?? false);
+        $maxAllowed = $isOpenEnded ? $remainingValue : min($max, $remainingValue);
 
         if ($remainingValue < $min || $maxAllowed < $min) {
             return false;
@@ -469,7 +572,8 @@ class CodeController extends Controller
         foreach ($distribution as $bucket) {
             $min = max(0, (int) round($bucket['min'] ?? 0));
             $max = max($min, (int) round($bucket['max'] ?? $min));
-            $maxAllowed = min($max, $remainingValue);
+            $isOpenEnded = (bool) ($bucket['open_ended'] ?? false);
+            $maxAllowed = $isOpenEnded ? $remainingValue : min($max, $remainingValue);
 
             if ($maxAllowed < $min) {
                 continue;
@@ -704,6 +808,21 @@ class CodeController extends Controller
         return [
             'result_type' => $isPrank ? 'prank' : 'money',
             'prank_label' => $isPrank ? $this->pickPrankLabel($code->code) : null,
+        ];
+    }
+
+    private function serializeUsedCodeResult(Code $code): array
+    {
+        $outcome = $this->buildOutcomePayload($code);
+
+        return [
+            'id' => $code->id,
+            'code' => $code->code,
+            'value' => (int) round($code->value),
+            'status' => $code->status,
+            'result_type' => $outcome['result_type'],
+            'prank_label' => $outcome['prank_label'],
+            'used_at' => optional($code->used_at)->toISOString(),
         ];
     }
 

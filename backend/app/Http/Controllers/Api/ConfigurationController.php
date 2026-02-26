@@ -13,16 +13,14 @@ class ConfigurationController extends Controller
     private const MAX_PRANK_PERCENTAGE = 95;
 
     private const DEFAULT_PRANKS = [
-        'Ganhe um abraco',
-        'Ganhe um cookie do seu super',
-        'Ganhe um abraco do gerente',
-        'Ganhe um abraco do CEO',
-        'Vale selfie com o time',
-        'Ganhe um cafezinho',
+        'Ganhe um abraço',
+        'Ganhe um abraço do gerente',
         'Vale elogio em voz alta',
-        'Vale danca da vitoria (30s)',
-        'Ganhe um aperto de mao premium',
-        'Vale foto no mural dos campeoes',
+        'Ganhe um aperto de mão premium',
+        'Ganhe um abraço do Wesley',
+        'Fica de boas não foi dessa vez',
+        'Vai ter que fazer uma dancinha (30s)',
+        'Vale um cookie pago pela Angela',
     ];
 
     public function show()
@@ -66,7 +64,7 @@ class ConfigurationController extends Controller
         $prankBalloons = $this->getPrankBalloonCount($totalBalloons, $prankPercentage);
         $moneyBalloons = max(0, $totalBalloons - $prankBalloons);
 
-        [$availableUniqueCount, $minimumNoZeroTotal] = $this->calculateMinimumNoZero(
+        [$availableUniqueCount, $minimumNoZeroTotal] = $this->calculateMoneyRangeTotals(
             $distribution,
             $moneyBalloons,
         );
@@ -111,7 +109,7 @@ class ConfigurationController extends Controller
         ];
     }
 
-    private function calculateMinimumNoZero(array $distribution, int $quantity): array
+    private function calculateMoneyRangeTotals(array $distribution, int $quantity): array
     {
         $values = [];
 
