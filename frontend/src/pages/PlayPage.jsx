@@ -265,16 +265,18 @@ function PlayPage() {
           <div className="play-card">
             <p className="stage-title">Dia do Fechamento</p>
             <p className="stage-subtitle">{helperText}</p>
-            <div className="play-stats-grid">
-              <div className="play-stat-box compact">
-                <span className="small-text">Total de balões</span>
-                <strong>{configuredBalloons}</strong>
+            {remainingBalloons <= 0 && (
+              <div className="play-stats-grid">
+                <div className="play-stat-box compact">
+                  <span className="small-text">Total de balões</span>
+                  <strong>{configuredBalloons}</strong>
+                </div>
+                <div className="play-stat-box compact">
+                  <span className="small-text">Saldo total</span>
+                  <strong>{formatCurrency(playData?.configuration?.total_value)}</strong>
+                </div>
               </div>
-              <div className="play-stat-box compact">
-                <span className="small-text">Saldo total</span>
-                <strong>{formatCurrency(playData?.configuration?.total_value)}</strong>
-              </div>
-            </div>
+            )}
             <div className="play-card-actions">
               <button
                 type="button"
