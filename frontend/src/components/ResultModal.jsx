@@ -50,6 +50,10 @@ function normalizePrankLabelText(label) {
 
   if (prankKeyHasAll(key, ['foi', 'dessa', 'vez'])) return 'Não foi dessa vez'
 
+  if (prankKeyHasAll(key, ['ganhe', 'cookie', 'angela'])) {
+    return 'Ganhe um cookie da Angela'
+  }
+
   if (prankKeyHasAll(key, ['cookie', 'angela']) || prankKeyHasAll(key, ['mural', 'campeo'])) {
     return 'Vale um cookie pago pela Angela'
   }
@@ -113,6 +117,7 @@ function getPrankPresentation(label) {
       label: 'Ganhe PIX $5 (da Jeeh Rainha)',
       image: valePix5Image,
     },
+    'ganhe um cookie da angela': { label: 'Ganhe um cookie da Angela', image: angelaImage },
     'vale um cookie pago pela angela': { label: 'Vale um cookie pago pela Angela', image: angelaImage },
     'vai ter que fazer uma dancinha 30s': { label: 'Vai ter que fazer uma dancinha (30s)', image: galvaoImage },
     'fica de boas nao foi dessa vez': { label: 'Fica de boas não foi dessa vez', image: ficaDeBoaImage },

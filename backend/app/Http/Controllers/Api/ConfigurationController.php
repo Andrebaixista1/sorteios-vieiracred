@@ -11,6 +11,7 @@ class ConfigurationController extends Controller
 {
     private const DEFAULT_PRANK_PERCENTAGE = 20;
     private const MAX_PRANK_PERCENTAGE = 95;
+    private const MAX_PRANK_WEIGHT = 100;
 
     private const DEFAULT_PRANKS = [
         'Ganhe um doce do Hugo',
@@ -20,6 +21,11 @@ class ConfigurationController extends Controller
         'Dança gatinho (30s)',
         'Vale PIX $10 (sem nada você não fica)',
         'Ganhe PIX $5 (da Jeeh Rainha)',
+        'Ganhe um abraço',
+        'Fica de boas não foi dessa vez',
+        'Vai ter que fazer uma dancinha (30s)',
+        'Ganhe um abraço do gerente',
+        'Ganhe um cookie da Angela',
     ];
 
     public function show()
@@ -30,6 +36,7 @@ class ConfigurationController extends Controller
                 'total_balloons' => 50,
                 'total_value' => 0,
                 'prank_percentage' => self::DEFAULT_PRANK_PERCENTAGE,
+                'prank_distribution' => $this->defaultPrankDistribution(),
                 'distribution' => $this->defaultDistribution(),
             ]
         );
@@ -43,6 +50,9 @@ class ConfigurationController extends Controller
             'total_balloons' => 'required|integer|min:10',
             'total_value' => 'required|numeric|min:0',
             'prank_percentage' => 'nullable|numeric|min:0|max:95',
+            'prank_distribution' => 'nullable|array',
+            'prank_distribution.*.label' => 'required_with:prank_distribution|string',
+            'prank_distribution.*.weight' => 'required_with:prank_distribution|numeric|min:0|max:100',
             'distribution' => 'required|array',
             'distribution.*.min' => 'required|numeric|min:0',
             'distribution.*.max' => 'required|numeric|min:0',
@@ -62,6 +72,15 @@ class ConfigurationController extends Controller
         $prankPercentage = $this->normalizePrankPercentage($validated['prank_percentage'] ?? null);
         $prankBalloons = $this->getPrankBalloonCount($totalBalloons, $prankPercentage);
         $moneyBalloons = max(0, $totalBalloons - $prankBalloons);
+        $prankDistribution = $this->normalizePrankDistribution($validated['prank_distribution'] ?? null);
+
+        if ($prankBalloons > 0 && !$this->hasActivePrankWeight($prankDistribution)) {
+            throw new HttpResponseException(
+                response()->json([
+                    'message' => 'Defina pelo menos uma pegadinha com peso maior que 0.',
+                ], 422)
+            );
+        }
 
         [$availableUniqueCount, $minimumNoZeroTotal] = $this->calculateMoneyRangeTotals(
             $distribution,
@@ -90,6 +109,7 @@ class ConfigurationController extends Controller
                 'total_balloons' => $totalBalloons,
                 'total_value' => $totalValue,
                 'prank_percentage' => $prankPercentage,
+                'prank_distribution' => $prankDistribution,
                 'distribution' => $distribution,
             ]
         );
@@ -106,6 +126,14 @@ class ConfigurationController extends Controller
             ['min' => 61, 'max' => 80, 'weight' => 33],
             ['min' => 81, 'max' => 100, 'weight' => 13],
         ];
+    }
+
+    private function defaultPrankDistribution(): array
+    {
+        return array_map(fn (string $label) => [
+            'label' => $label,
+            'weight' => 10,
+        ], self::DEFAULT_PRANKS);
     }
 
     private function calculateMoneyRangeTotals(array $distribution, int $quantity): array
@@ -152,6 +180,46 @@ class ConfigurationController extends Controller
         return min($maxPranksKeepingMoney, max(0, $requestedPranks));
     }
 
+    private function normalizePrankDistribution(?array $source): array
+    {
+        $defaults = $this->defaultPrankDistribution();
+        $weightsByLabel = [];
+
+        foreach (($source ?? []) as $item) {
+            $label = (string) ($item['label'] ?? '');
+            if ($label === '') {
+                continue;
+            }
+
+            $weightsByLabel[$label] = max(
+                0,
+                min(self::MAX_PRANK_WEIGHT, (int) round(floatval($item['weight'] ?? 0)))
+            );
+        }
+
+        return array_map(function (array $item) use ($weightsByLabel) {
+            $label = (string) $item['label'];
+
+            return [
+                'label' => $label,
+                'weight' => array_key_exists($label, $weightsByLabel)
+                    ? (int) $weightsByLabel[$label]
+                    : (int) ($item['weight'] ?? 0),
+            ];
+        }, $defaults);
+    }
+
+    private function hasActivePrankWeight(array $distribution): bool
+    {
+        foreach ($distribution as $item) {
+            if ((int) ($item['weight'] ?? 0) > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function appendPrankMeta(Configuration $configuration): array
     {
         $data = $configuration->toArray();
@@ -167,6 +235,7 @@ class ConfigurationController extends Controller
             ? intval(round(($prankBalloons / $totalBalloons) * 100))
             : 0;
         $data['prank_options'] = self::DEFAULT_PRANKS;
+        $data['prank_distribution'] = $this->normalizePrankDistribution($configuration->prank_distribution);
 
         return $data;
     }

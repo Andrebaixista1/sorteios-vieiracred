@@ -14,6 +14,7 @@ class CodeController extends Controller
 {
     private const DEFAULT_PRANK_PERCENTAGE = 20;
     private const MAX_PRANK_PERCENTAGE = 95;
+    private const MAX_PRANK_WEIGHT = 100;
 
     private const DEFAULT_PRANKS = [
         'Ganhe um doce do Hugo',
@@ -23,6 +24,11 @@ class CodeController extends Controller
         'Dança gatinho (30s)',
         'Vale PIX $10 (sem nada você não fica)',
         'Ganhe PIX $5 (da Jeeh Rainha)',
+        'Ganhe um abraço',
+        'Fica de boas não foi dessa vez',
+        'Vai ter que fazer uma dancinha (30s)',
+        'Ganhe um abraço do gerente',
+        'Ganhe um cookie da Angela',
     ];
 
     public function index()
@@ -228,14 +234,14 @@ class CodeController extends Controller
             ->orderByDesc('used_at')
             ->orderByDesc('id')
             ->limit(12)
-            ->get(['id', 'code', 'value', 'status', 'used_at'])
+            ->get(['id', 'configuration_id', 'code', 'value', 'status', 'used_at'])
             ->map(fn (Code $code) => $this->serializeUsedCodeResult($code))
             ->values();
 
         $usedResults = (clone $usedQuery)
             ->orderBy('used_at')
             ->orderBy('id')
-            ->get(['id', 'code', 'value', 'status', 'used_at'])
+            ->get(['id', 'configuration_id', 'code', 'value', 'status', 'used_at'])
             ->map(fn (Code $code) => $this->serializeUsedCodeResult($code))
             ->values();
 
@@ -249,6 +255,7 @@ class CodeController extends Controller
                 'prank_percentage' => $configuredPrankPercentage,
                 'prank_chance_percent' => $prankChancePercent,
                 'prank_options' => $this->getPrankOptions(),
+                'prank_distribution' => $this->getPrankDistribution($configuration),
                 'total_value' => $totalValue,
                 'distribution' => $configuration->distribution,
             ],
@@ -404,7 +411,7 @@ class CodeController extends Controller
             return [
                 'value' => 0,
                 'result_type' => 'prank',
-                'prank_label' => $this->pickPrankLabel($code),
+                'prank_label' => $this->pickPrankLabel($code, $configuration),
             ];
         }
 
@@ -736,6 +743,43 @@ class CodeController extends Controller
         return self::DEFAULT_PRANKS;
     }
 
+    private function defaultPrankDistribution(): array
+    {
+        return array_map(fn (string $label) => [
+            'label' => $label,
+            'weight' => 10,
+        ], $this->getPrankOptions());
+    }
+
+    private function getPrankDistribution(Configuration $configuration): array
+    {
+        $defaults = $this->defaultPrankDistribution();
+        $weightsByLabel = [];
+
+        foreach ((array) ($configuration->prank_distribution ?? []) as $item) {
+            $label = (string) ($item['label'] ?? '');
+            if ($label === '') {
+                continue;
+            }
+
+            $weightsByLabel[$label] = max(
+                0,
+                min(self::MAX_PRANK_WEIGHT, (int) round(floatval($item['weight'] ?? 0)))
+            );
+        }
+
+        return array_map(function (array $item) use ($weightsByLabel) {
+            $label = (string) $item['label'];
+
+            return [
+                'label' => $label,
+                'weight' => array_key_exists($label, $weightsByLabel)
+                    ? (int) $weightsByLabel[$label]
+                    : (int) ($item['weight'] ?? 0),
+            ];
+        }, $defaults);
+    }
+
     private function getPrankBalloonCount(Configuration $configuration): int
     {
         $totalBalloons = max(0, (int) $configuration->total_balloons);
@@ -783,21 +827,53 @@ class CodeController extends Controller
         return random_int(1, $remainingPops) <= $remainingPranks;
     }
 
-    private function pickPrankLabel(?string $seed = null): string
+    private function pickPrankLabel(?string $seed = null, ?Configuration $configuration = null): string
     {
-        $options = $this->getPrankOptions();
-        if (empty($options)) {
+        $weightedOptions = [];
+        $distribution = $configuration ? $this->getPrankDistribution($configuration) : $this->defaultPrankDistribution();
+
+        foreach ($distribution as $item) {
+            $label = (string) ($item['label'] ?? '');
+            $weight = max(0, (int) round(floatval($item['weight'] ?? 0)));
+
+            if ($label === '' || $weight <= 0) {
+                continue;
+            }
+
+            $weightedOptions[] = [
+                'label' => $label,
+                'weight' => $weight,
+            ];
+        }
+
+        if (empty($weightedOptions)) {
+            $options = $this->getPrankOptions();
+            if (empty($options)) {
+                return 'Pegadinha surpresa';
+            }
+
+            return ($seed === null || $seed === '')
+                ? $options[array_rand($options)]
+                : $options[((int) sprintf('%u', crc32(strtoupper((string) $seed)))) % count($options)];
+        }
+
+        $totalWeight = array_sum(array_map(fn ($item) => (int) $item['weight'], $weightedOptions));
+        if ($totalWeight <= 0) {
             return 'Pegadinha surpresa';
         }
 
-        if ($seed === null || $seed === '') {
-            return $options[array_rand($options)];
+        $cursor = $seed === null || $seed === ''
+            ? random_int(1, $totalWeight)
+            : (((int) sprintf('%u', crc32(strtoupper((string) $seed)))) % $totalWeight) + 1;
+
+        foreach ($weightedOptions as $item) {
+            $cursor -= (int) $item['weight'];
+            if ($cursor <= 0) {
+                return (string) $item['label'];
+            }
         }
 
-        $hash = (int) sprintf('%u', crc32(strtoupper((string) $seed)));
-        $index = $hash % count($options);
-
-        return $options[$index];
+        return (string) ($weightedOptions[array_key_last($weightedOptions)]['label'] ?? 'Pegadinha surpresa');
     }
 
     private function buildOutcomePayload(Code $code): array
@@ -806,7 +882,7 @@ class CodeController extends Controller
 
         return [
             'result_type' => $isPrank ? 'prank' : 'money',
-            'prank_label' => $isPrank ? $this->pickPrankLabel($code->code) : null,
+            'prank_label' => $isPrank ? $this->pickPrankLabel($code->code, $code->configuration) : null,
         ];
     }
 

@@ -18,6 +18,23 @@ const DEFAULT_DISTRIBUTION = [
 const DEFAULT_PRANK_PERCENTAGE = 20
 const MIN_PRANK_PERCENTAGE = 0
 const MAX_PRANK_PERCENTAGE = 95
+const DEFAULT_PRANK_WEIGHT = 10
+const MIN_PRANK_WEIGHT = 0
+const MAX_PRANK_WEIGHT = 100
+const DEFAULT_PRANK_OPTIONS = [
+  'Ganhe um doce do Hugo',
+  'Ganhe um doce do Ryan',
+  'Ganhe um doce da Jheni',
+  'Não foi dessa vez',
+  'Dança gatinho (30s)',
+  'Vale PIX $10 (sem nada você não fica)',
+  'Ganhe PIX $5 (da Jeeh Rainha)',
+  'Ganhe um abraço',
+  'Fica de boas não foi dessa vez',
+  'Vai ter que fazer uma dancinha (30s)',
+  'Ganhe um abraço do gerente',
+  'Ganhe um cookie da Angela',
+]
 
 const TAB_CONFIGURATION = 'configuration'
 const TAB_TOKENS = 'tokens'
@@ -28,8 +45,55 @@ const TABS = [
 const MIN_BUCKET_WEIGHT = 1
 const MAX_BUCKET_WEIGHT = 50
 
+function getPrankLabelKey(label) {
+  return String(label ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
 function getBucketKey(bucket) {
   return `${Number(bucket?.min ?? 0)}-${Number(bucket?.max ?? 0)}`
+}
+
+function mergePrankDistributionWithDefaults(source, labels) {
+  const labelList = Array.isArray(labels) && labels.length > 0 ? labels : DEFAULT_PRANK_OPTIONS
+  const input = Array.isArray(source) ? source : []
+  const byKey = new Map(
+    input.map((item) => [getPrankLabelKey(item?.label), item]),
+  )
+
+  return labelList.map((label) => {
+    const existing = byKey.get(getPrankLabelKey(label))
+    const weight = Number(existing?.weight ?? DEFAULT_PRANK_WEIGHT)
+
+    return {
+      label,
+      weight: Math.min(MAX_PRANK_WEIGHT, Math.max(MIN_PRANK_WEIGHT, Math.round(weight))),
+    }
+  })
+}
+
+function mergePrankOptionLabels(serverLabels) {
+  const result = []
+  const seen = new Set()
+
+  for (const label of DEFAULT_PRANK_OPTIONS) {
+    const normalized = String(label ?? '').trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+
+  for (const label of Array.isArray(serverLabels) ? serverLabels : []) {
+    const normalized = String(label ?? '').trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    result.push(normalized)
+  }
+
+  return result
 }
 
 function mergeDistributionWithDefaults(source) {
@@ -128,6 +192,36 @@ function toDisplayPercentages(items) {
   return parts.sort((a, b) => a.index - b.index).map((part) => part.base)
 }
 
+function toDisplayPercentagesAllowZero(items) {
+  const weights = items.map((item) =>
+    Math.max(MIN_PRANK_WEIGHT, Math.min(MAX_PRANK_WEIGHT, Number(item.weight ?? 0))),
+  )
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+
+  if (total <= 0) {
+    return items.map(() => 0)
+  }
+
+  const parts = weights.map((weight, index) => {
+    const exact = (weight / total) * 100
+    const base = Math.floor(exact)
+    return { index, base, fraction: exact - base }
+  })
+
+  let remainder = 100 - parts.reduce((sum, part) => sum + part.base, 0)
+
+  parts
+    .slice()
+    .sort((a, b) => b.fraction - a.fraction)
+    .forEach((part) => {
+      if (remainder <= 0) return
+      part.base += 1
+      remainder -= 1
+    })
+
+  return parts.sort((a, b) => a.index - b.index).map((part) => part.base)
+}
+
 function getDistinctPrizeValues(distribution) {
   const values = new Set()
 
@@ -151,6 +245,9 @@ function ConfigPage() {
   const [quantity, setQuantity] = useState(50)
   const [totalValue, setTotalValue] = useState(700)
   const [prankPercentage, setPrankPercentage] = useState(DEFAULT_PRANK_PERCENTAGE)
+  const [prankDistribution, setPrankDistribution] = useState(() =>
+    mergePrankDistributionWithDefaults([], DEFAULT_PRANK_OPTIONS),
+  )
   const [distribution, setDistribution] = useState(() => mergeDistributionWithDefaults(DEFAULT_DISTRIBUTION))
   const [codes, setCodes] = useState([])
   const [toast, setToast] = useState(null)
@@ -160,6 +257,11 @@ function ConfigPage() {
   const [showResetModal, setShowResetModal] = useState(false)
   const [tokenQuantity, setTokenQuantity] = useState(10)
   const [activeTab, setActiveTab] = useState(TAB_CONFIGURATION)
+  const [showPrankAccordion, setShowPrankAccordion] = useState(false)
+  const prankOptionLabels = useMemo(
+    () => mergePrankOptionLabels(configuration?.prank_options),
+    [configuration],
+  )
 
   useEffect(() => {
     fetchConfiguration()
@@ -237,6 +339,27 @@ function ConfigPage() {
       ),
     [distributionWithDefaults],
   )
+  const prankDistributionWithDefaults = useMemo(
+    () =>
+      mergePrankDistributionWithDefaults(
+        prankDistribution,
+        prankOptionLabels,
+      ),
+    [prankDistribution, prankOptionLabels],
+  )
+  const prankDistributionDisplayPercentages = useMemo(
+    () => toDisplayPercentagesAllowZero(prankDistributionWithDefaults),
+    [prankDistributionWithDefaults],
+  )
+  const prankDistributionTotalWeight = useMemo(
+    () =>
+      prankDistributionWithDefaults.reduce(
+        (sum, item) => sum + Math.max(0, Number(item.weight ?? 0)),
+        0,
+      ),
+    [prankDistributionWithDefaults],
+  )
+  const prankDistributionHasActiveOption = prankDistributionTotalWeight > 0
 
   const sortedCodes = useMemo(() => {
     const toTimestamp = (value) => {
@@ -274,6 +397,7 @@ function ConfigPage() {
     quantityNumber,
     prankPercentageNumber,
   )
+  const prankDistributionConfigIssue = prankBalloonCount > 0 && !prankDistributionHasActiveOption
   const moneyBalloonCount = Math.max(0, quantityNumber - prankBalloonCount)
   const prankChancePercent = prankPercentageNumber
   const moneyChancePercent = Math.max(0, 100 - prankPercentageNumber)
@@ -327,6 +451,12 @@ function ConfigPage() {
         response.prank_percentage ?? response.prank_chance_percent ?? DEFAULT_PRANK_PERCENTAGE,
       )
       setDistribution(mergeDistributionWithDefaults(response.distribution))
+      setPrankDistribution(
+        mergePrankDistributionWithDefaults(
+          response.prank_distribution,
+          mergePrankOptionLabels(response.prank_options),
+        ),
+      )
     } catch (error) {
       showToast(error.message, 'error')
     }
@@ -367,6 +497,11 @@ function ConfigPage() {
       return
     }
 
+    if (prankDistributionConfigIssue) {
+      showToast('Defina pelo menos uma pegadinha com peso maior que 0%.', 'error')
+      return
+    }
+
     setSaving(true)
     clearToast()
 
@@ -375,11 +510,24 @@ function ConfigPage() {
         total_balloons: Number(quantity),
         total_value: Number(totalValue),
         prank_percentage: prankPercentageNumber,
+        prank_distribution: prankDistributionWithDefaults.map((item) => ({
+          label: item.label,
+          weight: Number(item.weight ?? 0),
+        })),
         distribution: distributionWithDefaults,
       }
       const response = await saveConfiguration(payload)
       setConfiguration(response)
       setPrankPercentage(response?.prank_percentage ?? prankPercentageNumber)
+      const responseHasPrankDistribution = Array.isArray(response?.prank_distribution)
+      setPrankDistribution(
+        mergePrankDistributionWithDefaults(
+          responseHasPrankDistribution
+            ? response?.prank_distribution
+            : prankDistributionWithDefaults,
+          mergePrankOptionLabels(response?.prank_options ?? prankOptionLabels),
+        ),
+      )
       showToast('Configuração salva', 'success')
     } catch (error) {
       showToast(error.message, 'error')
@@ -470,6 +618,23 @@ function ConfigPage() {
     )
   }
 
+  function updatePrankWeight(index, value) {
+    setPrankDistribution((current) =>
+      mergePrankDistributionWithDefaults(current, prankOptionLabels).map(
+        (item, idx) =>
+          idx === index
+            ? {
+                ...item,
+                weight: Math.min(
+                  MAX_PRANK_WEIGHT,
+                  Math.max(MIN_PRANK_WEIGHT, Number(value)),
+                ),
+              }
+            : item,
+      ),
+    )
+  }
+
   function copyCode(code) {
     navigator.clipboard.writeText(code).then(() => {
       showToast(`Código ${code} copiado`, 'info')
@@ -489,6 +654,15 @@ function ConfigPage() {
           MIN_BUCKET_WEIGHT +
           Math.floor(Math.random() * (MAX_BUCKET_WEIGHT - MIN_BUCKET_WEIGHT + 1)),
       })),
+    )
+
+    setPrankDistribution((current) =>
+      mergePrankDistributionWithDefaults(current, prankOptionLabels).map(
+        (item) => ({
+          ...item,
+          weight: Math.floor(Math.random() * (MAX_PRANK_WEIGHT + 1)),
+        }),
+      ),
     )
   }
 
@@ -627,6 +801,54 @@ function ConfigPage() {
                       <p className="distribution-helper">
                         Percentual efetivo na rodada atual: {effectivePrankChancePercent}% (arredondamento por quantidade de balões)
                       </p>
+                    )}
+                    <button
+                      type="button"
+                      className="prank-accordion-toggle"
+                      onClick={() => setShowPrankAccordion((current) => !current)}
+                      aria-expanded={showPrankAccordion}
+                    >
+                      <span>Distribuição entre pegadinhas</span>
+                      <span className="prank-accordion-meta">
+                        {prankDistributionHasActiveOption
+                          ? `${prankDistributionWithDefaults.filter((item) => Number(item.weight) > 0).length} ativas`
+                          : '0 ativas'}
+                      </span>
+                    </button>
+
+                    {showPrankAccordion && (
+                      <div className="prank-accordion-panel">
+                        <p className="distribution-helper">
+                          Ajuste quais pegadinhas caem mais. Aqui pode usar 0%.
+                        </p>
+                        {prankDistributionConfigIssue && (
+                          <p className="distribution-helper prank-distribution-warning">
+                            Com chance de pegadinha acima de 0%, deixe ao menos 1 pegadinha com peso maior que 0.
+                          </p>
+                        )}
+                        <div className="prank-weights-list">
+                          {prankDistributionWithDefaults.map((item, index) => (
+                            <div key={`${item.label}-${index}`} className="prank-weight-row">
+                              <div className="prank-weight-header">
+                                <span className="prank-weight-label">{item.label}</span>
+                                <span className="percentage">
+                                  {prankDistributionDisplayPercentages[index] ?? 0}%
+                                </span>
+                              </div>
+                              <div className="slider-row">
+                                <input
+                                  type="range"
+                                  min={MIN_PRANK_WEIGHT}
+                                  max={MAX_PRANK_WEIGHT}
+                                  value={item.weight}
+                                  onChange={(event) => updatePrankWeight(index, event.target.value)}
+                                />
+                                <span className="percentage">{Number(item.weight ?? 0)}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
 

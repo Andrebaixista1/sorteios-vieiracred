@@ -15,11 +15,13 @@ class Configuration extends Model
         'total_balloons',
         'total_value',
         'prank_percentage',
+        'prank_distribution',
         'distribution',
     ];
 
     protected $casts = [
         'prank_percentage' => 'integer',
+        'prank_distribution' => 'array',
         'distribution' => 'array',
     ];
 
