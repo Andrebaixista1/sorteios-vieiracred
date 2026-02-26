@@ -47,9 +47,9 @@ export default function middleware(request) {
   </head>
   <body>
     <div class="card">
-      <h1>IP nao permitido</h1>
-      <p>Este site esta restrito para um IP especifico.</p>
-      <p>Seu IP detectado: <code>${clientIp || 'nao identificado'}</code></p>
+      <h1>IP não permitido</h1>
+      <p>Este site está restrito a um IP específico.</p>
+      <p>Seu IP detectado: <code>${clientIp || 'não identificado'}</code></p>
       <p>IP permitido: <code>${ALLOWED_IP}</code></p>
     </div>
   </body>
